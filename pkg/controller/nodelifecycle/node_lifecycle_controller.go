@@ -24,6 +24,7 @@ package nodelifecycle
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -505,12 +506,15 @@ func NewNodeLifecycleController(
 	klog.Infof("Controller will reconcile labels.")
 	nodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: controllerutil.CreateAddNodeHandler(func(node *v1.Node) error {
-			nc.nodeUpdateQueue.Add(node.Name)
+			criticalityValue := getNodeAssurance(node)
+			nc.nodeUpdateQueue.Add(node.Name, criticalityValue)
 			nc.nodeEvictionMap.registerNode(node.Name)
 			return nil
 		}),
 		UpdateFunc: controllerutil.CreateUpdateNodeHandler(func(_, newNode *v1.Node) error {
-			nc.nodeUpdateQueue.Add(newNode.Name)
+			criticalityValue := getNodeAssurance(newNode)
+			klog.Infof("Appending node prio %d", criticalityValue)
+			nc.nodeUpdateQueue.Add(newNode.Name, criticalityValue)
 			return nil
 		}),
 		DeleteFunc: controllerutil.CreateDeleteNodeHandler(func(node *v1.Node) error {
@@ -1223,8 +1227,23 @@ func (nc *Controller) podUpdated(oldPod, newPod *v1.Pod) {
 	}
 	if len(newPod.Spec.NodeName) != 0 && (oldPod == nil || newPod.Spec.NodeName != oldPod.Spec.NodeName) {
 		podItem := podUpdateItem{newPod.Namespace, newPod.Name}
-		nc.podUpdateQueue.Add(podItem)
+		criticalityValue := getPodCriticality(newPod)
+		nc.podUpdateQueue.Add(podItem, criticalityValue)
 	}
+}
+
+// helper function: returns an int that represents the criticality of the pod
+// Critical pods must be prioritized
+func getPodCriticality(pod *v1.Pod) int {
+	criticalityValue := 0
+	criticality, exist := pod.Labels["Criticality"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
 }
 
 func (nc *Controller) doPodProcessingWorker(ctx context.Context) {
@@ -1544,4 +1563,18 @@ func (nc *Controller) reconcileNodeLabels(nodeName string) error {
 		return fmt.Errorf("failed update labels for node %+v", node)
 	}
 	return nil
+}
+
+// helper function: returns an int that represents the assurance of the node
+// In brief: a node with high assurance probably has critical pods on it, and must be prioritized
+func getNodeAssurance(node *v1.Node) int {
+	criticalityValue := 0
+	criticality, exist := node.Annotations["Assurance"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
 }

@@ -20,14 +20,16 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/klog/v2"
+
 	"k8s.io/utils/clock"
 )
 
 type Interface interface {
-	Add(item interface{})
+	Add(item interface{}, priority ...int)
 	Len() int
-	Get() (item interface{}, shutdown bool)
-	Done(item interface{})
+	Get(blocking ...bool) (item interface{}, shutdown bool)
+	Done(item interface{}, priority ...int)
 	ShutDown()
 	ShutDownWithDrain()
 	ShuttingDown() bool
@@ -44,17 +46,20 @@ func NewNamed(name string) *Type {
 		rc,
 		globalMetricsFactory.newQueueMetrics(name, rc),
 		defaultUnfinishedWorkUpdatePeriod,
+		name,
 	)
 }
 
-func newQueue(c clock.WithTicker, metrics queueMetrics, updatePeriod time.Duration) *Type {
+func newQueue(c clock.WithTicker, metrics queueMetrics, updatePeriod time.Duration, name string) *Type {
 	t := &Type{
 		clock:                      c,
+		isempty:                    true,
 		dirty:                      set{},
 		processing:                 set{},
 		cond:                       sync.NewCond(&sync.Mutex{}),
 		metrics:                    metrics,
 		unfinishedWorkUpdatePeriod: updatePeriod,
+		name:                       name,
 	}
 
 	// Don't start the goroutine for a type of noMetrics so we don't consume
@@ -69,11 +74,14 @@ func newQueue(c clock.WithTicker, metrics queueMetrics, updatePeriod time.Durati
 const defaultUnfinishedWorkUpdatePeriod = 500 * time.Millisecond
 
 // Type is a work queue (see the package comment).
+const CRITICALITIES = 3
+
 type Type struct {
 	// queue defines the order in which we will work on items. Every
 	// element of queue should be in the dirty set and not in the
 	// processing set.
-	queue []t
+	queue   [CRITICALITIES][]t
+	isempty bool
 
 	// dirty defines all of the items that need to be processed.
 	dirty set
@@ -93,6 +101,7 @@ type Type struct {
 
 	unfinishedWorkUpdatePeriod time.Duration
 	clock                      clock.WithTicker
+	name                       string
 }
 
 type empty struct{}
@@ -117,7 +126,7 @@ func (s set) len() int {
 }
 
 // Add marks item as needing processing.
-func (q *Type) Add(item interface{}) {
+func (q *Type) Add(item interface{}, priority ...int) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 	if q.shuttingDown {
@@ -134,7 +143,17 @@ func (q *Type) Add(item interface{}) {
 		return
 	}
 
-	q.queue = append(q.queue, item)
+	prio := 0
+	if len(priority) > 0 {
+		prio = priority[0]
+		if prio > CRITICALITIES-1 {
+			prio = CRITICALITIES - 1
+		}
+	}
+	q.queue[prio] = append(q.queue[prio], item)
+	klog.Infof("%s Item added at prio %d", q.name, prio)
+	q.isempty = false
+
 	q.cond.Signal()
 }
 
@@ -144,27 +163,56 @@ func (q *Type) Add(item interface{}) {
 func (q *Type) Len() int {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
-	return len(q.queue)
+	length := 0
+	for i := 0; i < CRITICALITIES; i++ {
+		length += len(q.queue[i])
+	}
+	return length
 }
 
 // Get blocks until it can return an item to be processed. If shutdown = true,
 // the caller should end their goroutine. You must call Done with item when you
 // have finished processing it.
-func (q *Type) Get() (item interface{}, shutdown bool) {
+func (q *Type) Get(blocking ...bool) (item interface{}, shutdown bool) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
-	for len(q.queue) == 0 && !q.shuttingDown {
+	for q.isempty && !q.shuttingDown {
+		klog.Infof("%s Wait Condition Queue", q.name)
+		if len(blocking) > 0 {
+			if blocking[0] == false {
+				return nil, false
+			}
+		}
 		q.cond.Wait()
 	}
-	if len(q.queue) == 0 {
+	if q.isempty {
 		// We must be shutting down.
 		return nil, true
 	}
 
-	item = q.queue[0]
-	// The underlying array still exists and reference this object, so the object will not be garbage collected.
-	q.queue[0] = nil
-	q.queue = q.queue[1:]
+	length := 0
+
+	for i := CRITICALITIES - 1; i >= 0; i-- {
+		if len(q.queue[i]) != 0 {
+			item = q.queue[i][0]
+			// The underlying array still exists and reference this object,
+			// so the object will not be garbage collected.
+			q.queue[i][0] = nil
+			q.queue[i] = q.queue[i][1:]
+
+			klog.Infof("%s Item found at prio %d", q.name, i)
+			break
+		}
+	}
+
+	for i := 0; i < CRITICALITIES; i++ {
+		length += len(q.queue[i])
+		klog.Infof("%s Status prio %d %d", q.name, i, len(q.queue[i]))
+	}
+	if length == 0 {
+		q.isempty = true
+		klog.Infof("Empty queue ")
+	}
 
 	q.metrics.get(item)
 
@@ -177,7 +225,7 @@ func (q *Type) Get() (item interface{}, shutdown bool) {
 // Done marks item as done processing, and if it has been marked as dirty again
 // while it was being processed, it will be re-added to the queue for
 // re-processing.
-func (q *Type) Done(item interface{}) {
+func (q *Type) Done(item interface{}, priority ...int) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 
@@ -185,7 +233,15 @@ func (q *Type) Done(item interface{}) {
 
 	q.processing.delete(item)
 	if q.dirty.has(item) {
-		q.queue = append(q.queue, item)
+		prio := 0
+		if len(priority) > 0 {
+			prio = priority[0]
+			if prio > CRITICALITIES-1 {
+				prio = CRITICALITIES - 1
+			}
+		}
+		q.queue[prio] = append(q.queue[prio], item)
+		klog.Infof("%s Item done at prio %d", q.name, prio)
 		q.cond.Signal()
 	} else if q.processing.len() == 0 {
 		q.cond.Signal()

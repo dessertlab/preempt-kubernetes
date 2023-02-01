@@ -32,12 +32,13 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	apps "k8s.io/api/apps/v1"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -265,14 +266,14 @@ func (rsc *ReplicaSetController) resolveControllerRef(namespace string, controll
 	return rs
 }
 
-func (rsc *ReplicaSetController) enqueueRS(rs *apps.ReplicaSet) {
+func (rsc *ReplicaSetController) enqueueRS(rs *apps.ReplicaSet, criticality int) {
 	key, err := controller.KeyFunc(rs)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %#v: %v", rs, err))
 		return
 	}
-
-	rsc.queue.Add(key)
+	klog.Infof("Appending replicaset at prio %d", criticality)
+	rsc.queue.Add(key, criticality)
 }
 
 func (rsc *ReplicaSetController) enqueueRSAfter(rs *apps.ReplicaSet, duration time.Duration) {
@@ -288,7 +289,7 @@ func (rsc *ReplicaSetController) enqueueRSAfter(rs *apps.ReplicaSet, duration ti
 func (rsc *ReplicaSetController) addRS(obj interface{}) {
 	rs := obj.(*apps.ReplicaSet)
 	klog.V(4).Infof("Adding %s %s/%s", rsc.Kind, rs.Namespace, rs.Name)
-	rsc.enqueueRS(rs)
+	rsc.enqueueRS(rs, 0)
 }
 
 // callback when RS is updated
@@ -324,7 +325,7 @@ func (rsc *ReplicaSetController) updateRS(old, cur interface{}) {
 	if *(oldRS.Spec.Replicas) != *(curRS.Spec.Replicas) {
 		klog.V(4).Infof("%v %v updated. Desired pod count change: %d->%d", rsc.Kind, curRS.Name, *(oldRS.Spec.Replicas), *(curRS.Spec.Replicas))
 	}
-	rsc.enqueueRS(curRS)
+	rsc.enqueueRS(curRS, 0)
 }
 
 func (rsc *ReplicaSetController) deleteRS(obj interface{}) {
@@ -359,6 +360,7 @@ func (rsc *ReplicaSetController) deleteRS(obj interface{}) {
 // When a pod is created, enqueue the replica set that manages it and update its expectations.
 func (rsc *ReplicaSetController) addPod(obj interface{}) {
 	pod := obj.(*v1.Pod)
+	criticality := getPodCriticality(pod)
 
 	if pod.DeletionTimestamp != nil {
 		// on a restart of the controller manager, it's possible a new pod shows up in a state that
@@ -379,7 +381,8 @@ func (rsc *ReplicaSetController) addPod(obj interface{}) {
 		}
 		klog.V(4).Infof("Pod %s created: %#v.", pod.Name, pod)
 		rsc.expectations.CreationObserved(rsKey)
-		rsc.queue.Add(rsKey)
+		klog.Infof("Appending replicaset at prio %d", criticality)
+		rsc.queue.Add(rsKey, criticality)
 		return
 	}
 
@@ -393,7 +396,7 @@ func (rsc *ReplicaSetController) addPod(obj interface{}) {
 	}
 	klog.V(4).Infof("Orphan Pod %s created: %#v.", pod.Name, pod)
 	for _, rs := range rss {
-		rsc.enqueueRS(rs)
+		rsc.enqueueRS(rs, criticality)
 	}
 }
 
@@ -403,6 +406,8 @@ func (rsc *ReplicaSetController) addPod(obj interface{}) {
 func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 	curPod := cur.(*v1.Pod)
 	oldPod := old.(*v1.Pod)
+	criticality := getPodCriticality(curPod)
+
 	if curPod.ResourceVersion == oldPod.ResourceVersion {
 		// Periodic resync will send update events for all known pods.
 		// Two different versions of the same pod will always have different RVs.
@@ -430,7 +435,7 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 	if controllerRefChanged && oldControllerRef != nil {
 		// The ControllerRef was changed. Sync the old controller, if any.
 		if rs := rsc.resolveControllerRef(oldPod.Namespace, oldControllerRef); rs != nil {
-			rsc.enqueueRS(rs)
+			rsc.enqueueRS(rs, criticality)
 		}
 	}
 
@@ -441,7 +446,7 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 			return
 		}
 		klog.V(4).Infof("Pod %s updated, objectMeta %+v -> %+v.", curPod.Name, oldPod.ObjectMeta, curPod.ObjectMeta)
-		rsc.enqueueRS(rs)
+		rsc.enqueueRS(rs, criticality)
 		// TODO: MinReadySeconds in the Pod will generate an Available condition to be added in
 		// the Pod status which in turn will trigger a requeue of the owning replica set thus
 		// having its status updated with the newly available replica. For now, we can fake the
@@ -467,7 +472,7 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 		}
 		klog.V(4).Infof("Orphan Pod %s updated, objectMeta %+v -> %+v.", curPod.Name, oldPod.ObjectMeta, curPod.ObjectMeta)
 		for _, rs := range rss {
-			rsc.enqueueRS(rs)
+			rsc.enqueueRS(rs, criticality)
 		}
 	}
 }
@@ -476,6 +481,7 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 // obj could be an *v1.Pod, or a DeletionFinalStateUnknown marker item.
 func (rsc *ReplicaSetController) deletePod(obj interface{}) {
 	pod, ok := obj.(*v1.Pod)
+	criticality := getPodCriticality(pod)
 
 	// When a delete is dropped, the relist will notice a pod in the store not
 	// in the list, leading to the insertion of a tombstone object which contains
@@ -510,21 +516,40 @@ func (rsc *ReplicaSetController) deletePod(obj interface{}) {
 	}
 	klog.V(4).Infof("Pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, utilruntime.GetCaller(), pod.DeletionTimestamp, pod)
 	rsc.expectations.DeletionObserved(rsKey, controller.PodKey(pod))
-	rsc.queue.Add(rsKey)
+	rsc.queue.Add(rsKey, criticality)
+}
+
+// helper function: returns an int that represents the criticality of the pod
+// Critical pods must be prioritized
+func getPodCriticality(pod *v1.Pod) int {
+	criticalityValue := 0
+	criticality, exist := pod.Labels["Criticality"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
 }
 
 // worker runs a worker thread that just dequeues items, processes them, and marks them done.
 // It enforces that the syncHandler is never invoked concurrently with the same key.
 func (rsc *ReplicaSetController) worker(ctx context.Context) {
 	for rsc.processNextWorkItem(ctx) {
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
 func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
-	key, quit := rsc.queue.Get()
+	key, quit := rsc.queue.Get(false)
 	if quit {
 		return false
 	}
+	if key == nil {
+		return true
+	}
+
 	defer rsc.queue.Done(key)
 
 	err := rsc.syncHandler(ctx, key.(string))

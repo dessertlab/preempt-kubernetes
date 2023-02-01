@@ -22,6 +22,7 @@ import (
 	"hash/fnv"
 	"io"
 	"math"
+	"strconv"
 	"sync"
 	"time"
 
@@ -195,9 +196,13 @@ func (tc *NoExecuteTaintManager) Run(ctx context.Context) {
 	// into channels.
 	go func(stopCh <-chan struct{}) {
 		for {
-			item, shutdown := tc.nodeUpdateQueue.Get()
+			time.Sleep(50 * time.Millisecond)
+			item, shutdown := tc.nodeUpdateQueue.Get(false)
 			if shutdown {
 				break
+			}
+			if item == nil {
+				continue
 			}
 			nodeUpdate := item.(nodeUpdateItem)
 			hash := hash(nodeUpdate.nodeName, UpdateWorkerSize)
@@ -279,12 +284,14 @@ func (tc *NoExecuteTaintManager) PodUpdated(oldPod *v1.Pod, newPod *v1.Pod) {
 	podName := ""
 	podNamespace := ""
 	nodeName := ""
+	var pod *v1.Pod
 	oldTolerations := []v1.Toleration{}
 	if oldPod != nil {
 		podName = oldPod.Name
 		podNamespace = oldPod.Namespace
 		nodeName = oldPod.Spec.NodeName
 		oldTolerations = oldPod.Spec.Tolerations
+		pod = oldPod
 	}
 	newTolerations := []v1.Toleration{}
 	if newPod != nil {
@@ -292,6 +299,7 @@ func (tc *NoExecuteTaintManager) PodUpdated(oldPod *v1.Pod, newPod *v1.Pod) {
 		podNamespace = newPod.Namespace
 		nodeName = newPod.Spec.NodeName
 		newTolerations = newPod.Spec.Tolerations
+		pod = newPod
 	}
 
 	if oldPod != nil && newPod != nil && helper.Semantic.DeepEqual(oldTolerations, newTolerations) && oldPod.Spec.NodeName == newPod.Spec.NodeName {
@@ -303,22 +311,41 @@ func (tc *NoExecuteTaintManager) PodUpdated(oldPod *v1.Pod, newPod *v1.Pod) {
 		nodeName:     nodeName,
 	}
 
-	tc.podUpdateQueue.Add(updateItem)
+	criticalityValue := getPodCriticality(pod)
+	tc.podUpdateQueue.Add(updateItem, criticalityValue)
+}
+
+// helper function: returns an int that represents the criticality of the pod
+// Critical pods must be prioritized
+func getPodCriticality(pod *v1.Pod) int {
+	criticalityValue := 0
+	criticality, exist := pod.Labels["Criticality"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
 }
 
 // NodeUpdated is used to notify NoExecuteTaintManager about Node changes.
 func (tc *NoExecuteTaintManager) NodeUpdated(oldNode *v1.Node, newNode *v1.Node) {
 	nodeName := ""
+	var node *v1.Node
+
 	oldTaints := []v1.Taint{}
 	if oldNode != nil {
 		nodeName = oldNode.Name
 		oldTaints = getNoExecuteTaints(oldNode.Spec.Taints)
+		node = oldNode
 	}
 
 	newTaints := []v1.Taint{}
 	if newNode != nil {
 		nodeName = newNode.Name
 		newTaints = getNoExecuteTaints(newNode.Spec.Taints)
+		node = newNode
 	}
 
 	if oldNode != nil && newNode != nil && helper.Semantic.DeepEqual(oldTaints, newTaints) {
@@ -328,7 +355,9 @@ func (tc *NoExecuteTaintManager) NodeUpdated(oldNode *v1.Node, newNode *v1.Node)
 		nodeName: nodeName,
 	}
 
-	tc.nodeUpdateQueue.Add(updateItem)
+	criticalityValue := getNodeAssurance(node)
+	klog.Infof("Appending node at prio %d", criticalityValue)
+	tc.nodeUpdateQueue.Add(updateItem, criticalityValue)
 }
 
 func (tc *NoExecuteTaintManager) cancelWorkWithEvent(nsName types.NamespacedName) {
@@ -467,9 +496,13 @@ func (tc *NoExecuteTaintManager) handleNodeUpdate(ctx context.Context, nodeUpdat
 	}
 
 	now := time.Now()
-	for _, pod := range pods {
-		podNamespacedName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
-		tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod.Spec.Tolerations, taints, now)
+	for i := 2; i >= 0; i++ {
+		for _, pod := range pods {
+			if getPodCriticality(pod) == i {
+				podNamespacedName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
+				tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod.Spec.Tolerations, taints, now)
+			}
+		}
 	}
 }
 
@@ -495,4 +528,18 @@ func (tc *NoExecuteTaintManager) emitCancelPodDeletionEvent(nsName types.Namespa
 		Namespace: nsName.Namespace,
 	}
 	tc.recorder.Eventf(ref, v1.EventTypeNormal, "TaintManagerEviction", "Cancelling deletion of Pod %s", nsName.String())
+}
+
+// helper function: returns an int that represents the assurance of the node
+// In brief: a node with high assurance probably has critical pods on it, and must be prioritized
+func getNodeAssurance(node *v1.Node) int {
+	criticalityValue := 0
+	criticality, exist := node.Annotations["Assurance"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
 }
