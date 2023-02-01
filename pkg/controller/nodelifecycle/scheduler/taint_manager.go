@@ -196,8 +196,8 @@ func (tc *NoExecuteTaintManager) Run(ctx context.Context) {
 	// into channels.
 	go func(stopCh <-chan struct{}) {
 		for {
-			time.Sleep(50 * time.Millisecond)
-			item, shutdown := tc.nodeUpdateQueue.Get(false)
+			//time.Sleep(50 * time.Millisecond)
+			item, shutdown := tc.nodeUpdateQueue.Get()
 			if shutdown {
 				break
 			}
@@ -496,7 +496,7 @@ func (tc *NoExecuteTaintManager) handleNodeUpdate(ctx context.Context, nodeUpdat
 	}
 
 	now := time.Now()
-	for i := 2; i >= 0; i++ {
+	for i := 2; i >= 0; i-- {
 		for _, pod := range pods {
 			if getPodCriticality(pod) == i {
 				podNamespacedName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"k8s.io/klog/v2"
-
 	"k8s.io/utils/clock"
 )
 
@@ -133,6 +132,9 @@ func (q *Type) Add(item interface{}, priority ...int) {
 		return
 	}
 	if q.dirty.has(item) {
+		if q.name == "replicaset" {
+			klog.Infof("%s GREPTAG Item return dirty")
+		}
 		return
 	}
 
@@ -140,6 +142,9 @@ func (q *Type) Add(item interface{}, priority ...int) {
 
 	q.dirty.insert(item)
 	if q.processing.has(item) {
+		if q.name == "replicaset" {
+			klog.Infof("%s GREPTAG Item return processing")
+		}
 		return
 	}
 
@@ -151,7 +156,7 @@ func (q *Type) Add(item interface{}, priority ...int) {
 		}
 	}
 	q.queue[prio] = append(q.queue[prio], item)
-	klog.Infof("%s Item added at prio %d", q.name, prio)
+	klog.Infof("%s GREPTAG Item added at prio signaling %d", q.name, prio)
 	q.isempty = false
 
 	q.cond.Signal()
@@ -177,12 +182,12 @@ func (q *Type) Get(blocking ...bool) (item interface{}, shutdown bool) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 	for q.isempty && !q.shuttingDown {
-		klog.Infof("%s Wait Condition Queue", q.name)
-		if len(blocking) > 0 {
-			if blocking[0] == false {
-				return nil, false
-			}
-		}
+		//klog.Infof("%s Wait Condition Queue", q.name)
+		// if len(blocking) > 0 {
+		// 	if !blocking[0] {
+		// 		return nil, false
+		// 	}
+		// }
 		q.cond.Wait()
 	}
 	if q.isempty {
@@ -200,18 +205,18 @@ func (q *Type) Get(blocking ...bool) (item interface{}, shutdown bool) {
 			q.queue[i][0] = nil
 			q.queue[i] = q.queue[i][1:]
 
-			klog.Infof("%s Item found at prio %d", q.name, i)
+			//klog.Infof("%s Item found at prio %d", q.name, i)
 			break
 		}
 	}
 
 	for i := 0; i < CRITICALITIES; i++ {
 		length += len(q.queue[i])
-		klog.Infof("%s Status prio %d %d", q.name, i, len(q.queue[i]))
+		//klog.Infof("%s Status prio %d %d", q.name, i, len(q.queue[i]))
 	}
 	if length == 0 {
 		q.isempty = true
-		klog.Infof("Empty queue ")
+		//klog.Infof("Empty queue ")
 	}
 
 	q.metrics.get(item)
@@ -241,7 +246,8 @@ func (q *Type) Done(item interface{}, priority ...int) {
 			}
 		}
 		q.queue[prio] = append(q.queue[prio], item)
-		klog.Infof("%s Item done at prio %d", q.name, prio)
+		//klog.Infof("%s Item done at prio %d", q.name, prio)
+		q.isempty = false
 		q.cond.Signal()
 	} else if q.processing.len() == 0 {
 		q.cond.Signal()

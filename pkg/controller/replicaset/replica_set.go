@@ -272,7 +272,7 @@ func (rsc *ReplicaSetController) enqueueRS(rs *apps.ReplicaSet, criticality int)
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %#v: %v", rs, err))
 		return
 	}
-	klog.Infof("Appending replicaset at prio %d", criticality)
+	klog.Infof("enqueueRS - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, criticality)
 	rsc.queue.Add(key, criticality)
 }
 
@@ -325,6 +325,7 @@ func (rsc *ReplicaSetController) updateRS(old, cur interface{}) {
 	if *(oldRS.Spec.Replicas) != *(curRS.Spec.Replicas) {
 		klog.V(4).Infof("%v %v updated. Desired pod count change: %d->%d", rsc.Kind, curRS.Name, *(oldRS.Spec.Replicas), *(curRS.Spec.Replicas))
 	}
+	klog.Infof("updateRS - GREPTAG Enqueue replicaset %s at prio %d", curRS.Name, 0)
 	rsc.enqueueRS(curRS, 0)
 }
 
@@ -360,7 +361,6 @@ func (rsc *ReplicaSetController) deleteRS(obj interface{}) {
 // When a pod is created, enqueue the replica set that manages it and update its expectations.
 func (rsc *ReplicaSetController) addPod(obj interface{}) {
 	pod := obj.(*v1.Pod)
-	criticality := getPodCriticality(pod)
 
 	if pod.DeletionTimestamp != nil {
 		// on a restart of the controller manager, it's possible a new pod shows up in a state that
@@ -381,8 +381,8 @@ func (rsc *ReplicaSetController) addPod(obj interface{}) {
 		}
 		klog.V(4).Infof("Pod %s created: %#v.", pod.Name, pod)
 		rsc.expectations.CreationObserved(rsKey)
-		klog.Infof("Appending replicaset at prio %d", criticality)
-		rsc.queue.Add(rsKey, criticality)
+		klog.Infof("addPod1 - GREPTAG Appending replicaset %s at prio %d", rs.Name, getPodCriticality(pod))
+		rsc.queue.Add(rsKey, getPodCriticality(pod))
 		return
 	}
 
@@ -396,7 +396,8 @@ func (rsc *ReplicaSetController) addPod(obj interface{}) {
 	}
 	klog.V(4).Infof("Orphan Pod %s created: %#v.", pod.Name, pod)
 	for _, rs := range rss {
-		rsc.enqueueRS(rs, criticality)
+		klog.Infof("addPod2 - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, getPodCriticality(pod))
+		rsc.enqueueRS(rs, getPodCriticality(pod))
 	}
 }
 
@@ -406,7 +407,6 @@ func (rsc *ReplicaSetController) addPod(obj interface{}) {
 func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 	curPod := cur.(*v1.Pod)
 	oldPod := old.(*v1.Pod)
-	criticality := getPodCriticality(curPod)
 
 	if curPod.ResourceVersion == oldPod.ResourceVersion {
 		// Periodic resync will send update events for all known pods.
@@ -432,10 +432,12 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 	curControllerRef := metav1.GetControllerOf(curPod)
 	oldControllerRef := metav1.GetControllerOf(oldPod)
 	controllerRefChanged := !reflect.DeepEqual(curControllerRef, oldControllerRef)
+
 	if controllerRefChanged && oldControllerRef != nil {
 		// The ControllerRef was changed. Sync the old controller, if any.
 		if rs := rsc.resolveControllerRef(oldPod.Namespace, oldControllerRef); rs != nil {
-			rsc.enqueueRS(rs, criticality)
+			klog.Infof("updatePod1 - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, getPodCriticality(oldPod))
+			rsc.enqueueRS(rs, getPodCriticality(oldPod))
 		}
 	}
 
@@ -446,7 +448,8 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 			return
 		}
 		klog.V(4).Infof("Pod %s updated, objectMeta %+v -> %+v.", curPod.Name, oldPod.ObjectMeta, curPod.ObjectMeta)
-		rsc.enqueueRS(rs, criticality)
+		klog.Infof("updatePod2 - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, getPodCriticality(curPod))
+		rsc.enqueueRS(rs, getPodCriticality(curPod))
 		// TODO: MinReadySeconds in the Pod will generate an Available condition to be added in
 		// the Pod status which in turn will trigger a requeue of the owning replica set thus
 		// having its status updated with the newly available replica. For now, we can fake the
@@ -458,6 +461,7 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 			klog.V(2).Infof("%v %q will be enqueued after %ds for availability check", rsc.Kind, rs.Name, rs.Spec.MinReadySeconds)
 			// Add a second to avoid milliseconds skew in AddAfter.
 			// See https://github.com/kubernetes/kubernetes/issues/39785#issuecomment-279959133 for more info.
+			klog.Infof("updatePod3 - GREPTAG Enqueue replicaset %s", rs.Name)
 			rsc.enqueueRSAfter(rs, (time.Duration(rs.Spec.MinReadySeconds)*time.Second)+time.Second)
 		}
 		return
@@ -472,7 +476,8 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 		}
 		klog.V(4).Infof("Orphan Pod %s updated, objectMeta %+v -> %+v.", curPod.Name, oldPod.ObjectMeta, curPod.ObjectMeta)
 		for _, rs := range rss {
-			rsc.enqueueRS(rs, criticality)
+			klog.Infof("updatePod4 - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, getPodCriticality(curPod))
+			rsc.enqueueRS(rs, getPodCriticality(curPod))
 		}
 	}
 }
@@ -481,7 +486,6 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 // obj could be an *v1.Pod, or a DeletionFinalStateUnknown marker item.
 func (rsc *ReplicaSetController) deletePod(obj interface{}) {
 	pod, ok := obj.(*v1.Pod)
-	criticality := getPodCriticality(pod)
 
 	// When a delete is dropped, the relist will notice a pod in the store not
 	// in the list, leading to the insertion of a tombstone object which contains
@@ -516,7 +520,8 @@ func (rsc *ReplicaSetController) deletePod(obj interface{}) {
 	}
 	klog.V(4).Infof("Pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, utilruntime.GetCaller(), pod.DeletionTimestamp, pod)
 	rsc.expectations.DeletionObserved(rsKey, controller.PodKey(pod))
-	rsc.queue.Add(rsKey, criticality)
+	klog.Infof("deletePod - GREPTAG Appending replicaset %s at prio %d", rs.Name, getPodCriticality(pod))
+	rsc.queue.Add(rsKey, getPodCriticality(pod))
 }
 
 // helper function: returns an int that represents the criticality of the pod
@@ -537,18 +542,20 @@ func getPodCriticality(pod *v1.Pod) int {
 // It enforces that the syncHandler is never invoked concurrently with the same key.
 func (rsc *ReplicaSetController) worker(ctx context.Context) {
 	for rsc.processNextWorkItem(ctx) {
-		time.Sleep(50 * time.Millisecond)
+		//time.Sleep(50 * time.Millisecond)
 	}
 }
 
 func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
-	key, quit := rsc.queue.Get(false)
+	klog.Infof("processNextWorkItem1 - GREPTAG Waiting for replicaset")
+	key, quit := rsc.queue.Get()
+	klog.Infof("processNextWorkItem1 - GREPTAG Got replicaset %s", key)
 	if quit {
 		return false
 	}
-	if key == nil {
-		return true
-	}
+	// if key == nil {
+	// 	return true
+	// }
 
 	defer rsc.queue.Done(key)
 
@@ -559,6 +566,7 @@ func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
 	}
 
 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
+	klog.Infof("processNextWorkItem - GREPTAG error add with limit ")
 	rsc.queue.AddRateLimited(key)
 
 	return true
