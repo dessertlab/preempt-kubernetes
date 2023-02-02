@@ -272,7 +272,7 @@ func (rsc *ReplicaSetController) enqueueRS(rs *apps.ReplicaSet, criticality int)
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %#v: %v", rs, err))
 		return
 	}
-	klog.Infof("enqueueRS - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, criticality)
+	//klog.Infof("enqueueRS - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, criticality)
 	rsc.queue.Add(key, criticality)
 }
 
@@ -325,7 +325,7 @@ func (rsc *ReplicaSetController) updateRS(old, cur interface{}) {
 	if *(oldRS.Spec.Replicas) != *(curRS.Spec.Replicas) {
 		klog.V(4).Infof("%v %v updated. Desired pod count change: %d->%d", rsc.Kind, curRS.Name, *(oldRS.Spec.Replicas), *(curRS.Spec.Replicas))
 	}
-	klog.Infof("updateRS - GREPTAG Enqueue replicaset %s at prio %d", curRS.Name, 0)
+	//klog.Infof("updateRS - GREPTAG Enqueue replicaset %s at prio %d", curRS.Name, 0)
 	rsc.enqueueRS(curRS, 0)
 }
 
@@ -381,7 +381,7 @@ func (rsc *ReplicaSetController) addPod(obj interface{}) {
 		}
 		klog.V(4).Infof("Pod %s created: %#v.", pod.Name, pod)
 		rsc.expectations.CreationObserved(rsKey)
-		klog.Infof("addPod1 - GREPTAG Appending replicaset %s at prio %d", rs.Name, getPodCriticality(pod))
+		//klog.Infof("addPod1 - GREPTAG Appending replicaset %s at prio %d", rs.Name, getPodCriticality(pod))
 		rsc.queue.Add(rsKey, getPodCriticality(pod))
 		return
 	}
@@ -396,7 +396,7 @@ func (rsc *ReplicaSetController) addPod(obj interface{}) {
 	}
 	klog.V(4).Infof("Orphan Pod %s created: %#v.", pod.Name, pod)
 	for _, rs := range rss {
-		klog.Infof("addPod2 - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, getPodCriticality(pod))
+		//klog.Infof("addPod2 - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, getPodCriticality(pod))
 		rsc.enqueueRS(rs, getPodCriticality(pod))
 	}
 }
@@ -436,7 +436,7 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 	if controllerRefChanged && oldControllerRef != nil {
 		// The ControllerRef was changed. Sync the old controller, if any.
 		if rs := rsc.resolveControllerRef(oldPod.Namespace, oldControllerRef); rs != nil {
-			klog.Infof("updatePod1 - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, getPodCriticality(oldPod))
+			//klog.Infof("updatePod1 - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, getPodCriticality(oldPod))
 			rsc.enqueueRS(rs, getPodCriticality(oldPod))
 		}
 	}
@@ -448,7 +448,7 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 			return
 		}
 		klog.V(4).Infof("Pod %s updated, objectMeta %+v -> %+v.", curPod.Name, oldPod.ObjectMeta, curPod.ObjectMeta)
-		klog.Infof("updatePod2 - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, getPodCriticality(curPod))
+		//klog.Infof("updatePod2 - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, getPodCriticality(curPod))
 		rsc.enqueueRS(rs, getPodCriticality(curPod))
 		// TODO: MinReadySeconds in the Pod will generate an Available condition to be added in
 		// the Pod status which in turn will trigger a requeue of the owning replica set thus
@@ -461,7 +461,7 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 			klog.V(2).Infof("%v %q will be enqueued after %ds for availability check", rsc.Kind, rs.Name, rs.Spec.MinReadySeconds)
 			// Add a second to avoid milliseconds skew in AddAfter.
 			// See https://github.com/kubernetes/kubernetes/issues/39785#issuecomment-279959133 for more info.
-			klog.Infof("updatePod3 - GREPTAG Enqueue replicaset %s", rs.Name)
+			//klog.Infof("updatePod3 - GREPTAG Enqueue replicaset %s", rs.Name)
 			rsc.enqueueRSAfter(rs, (time.Duration(rs.Spec.MinReadySeconds)*time.Second)+time.Second)
 		}
 		return
@@ -476,7 +476,7 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 		}
 		klog.V(4).Infof("Orphan Pod %s updated, objectMeta %+v -> %+v.", curPod.Name, oldPod.ObjectMeta, curPod.ObjectMeta)
 		for _, rs := range rss {
-			klog.Infof("updatePod4 - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, getPodCriticality(curPod))
+			//klog.Infof("updatePod4 - GREPTAG Enqueue replicaset %s at prio %d", rs.Name, getPodCriticality(curPod))
 			rsc.enqueueRS(rs, getPodCriticality(curPod))
 		}
 	}
@@ -520,7 +520,7 @@ func (rsc *ReplicaSetController) deletePod(obj interface{}) {
 	}
 	klog.V(4).Infof("Pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, utilruntime.GetCaller(), pod.DeletionTimestamp, pod)
 	rsc.expectations.DeletionObserved(rsKey, controller.PodKey(pod))
-	klog.Infof("deletePod - GREPTAG Appending replicaset %s at prio %d", rs.Name, getPodCriticality(pod))
+	//klog.Infof("deletePod - GREPTAG Appending replicaset %s at prio %d", rs.Name, getPodCriticality(pod))
 	rsc.queue.Add(rsKey, getPodCriticality(pod))
 }
 
@@ -547,9 +547,9 @@ func (rsc *ReplicaSetController) worker(ctx context.Context) {
 }
 
 func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
-	klog.Infof("processNextWorkItem1 - GREPTAG Waiting for replicaset")
+	//klog.Infof("processNextWorkItem1 - GREPTAG Waiting for replicaset")
 	key, quit := rsc.queue.Get()
-	klog.Infof("processNextWorkItem1 - GREPTAG Got replicaset %s", key)
+	//klog.Infof("processNextWorkItem1 - GREPTAG Got replicaset %s", key)
 	if quit {
 		return false
 	}
@@ -566,7 +566,7 @@ func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
 	}
 
 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
-	klog.Infof("processNextWorkItem - GREPTAG error add with limit ")
+	//klog.Infof("processNextWorkItem - GREPTAG error add with limit ")
 	rsc.queue.AddRateLimited(key)
 
 	return true

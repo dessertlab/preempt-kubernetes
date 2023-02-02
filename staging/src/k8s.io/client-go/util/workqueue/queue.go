@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 )
 
@@ -132,9 +131,6 @@ func (q *Type) Add(item interface{}, priority ...int) {
 		return
 	}
 	if q.dirty.has(item) {
-		if q.name == "replicaset" {
-			klog.Infof("%s GREPTAG Item return dirty")
-		}
 		return
 	}
 
@@ -142,9 +138,6 @@ func (q *Type) Add(item interface{}, priority ...int) {
 
 	q.dirty.insert(item)
 	if q.processing.has(item) {
-		if q.name == "replicaset" {
-			klog.Infof("%s GREPTAG Item return processing")
-		}
 		return
 	}
 
@@ -156,7 +149,7 @@ func (q *Type) Add(item interface{}, priority ...int) {
 		}
 	}
 	q.queue[prio] = append(q.queue[prio], item)
-	klog.Infof("%s GREPTAG Item added at prio signaling %d", q.name, prio)
+	//klog.Infof("%s GREPTAG Item added at prio signaling %d", q.name, prio)
 	q.isempty = false
 
 	q.cond.Signal()
@@ -182,7 +175,6 @@ func (q *Type) Get(blocking ...bool) (item interface{}, shutdown bool) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 	for q.isempty && !q.shuttingDown {
-		//klog.Infof("%s Wait Condition Queue", q.name)
 		// if len(blocking) > 0 {
 		// 	if !blocking[0] {
 		// 		return nil, false
@@ -195,23 +187,24 @@ func (q *Type) Get(blocking ...bool) (item interface{}, shutdown bool) {
 		return nil, true
 	}
 
-	length := 0
-
-	for i := CRITICALITIES - 1; i >= 0; i-- {
+	var i int8
+	for i = CRITICALITIES - 1; i >= 0; i-- {
 		if len(q.queue[i]) != 0 {
 			item = q.queue[i][0]
 			// The underlying array still exists and reference this object,
 			// so the object will not be garbage collected.
 			q.queue[i][0] = nil
 			q.queue[i] = q.queue[i][1:]
-
 			//klog.Infof("%s Item found at prio %d", q.name, i)
 			break
 		}
 	}
 
-	for i := 0; i < CRITICALITIES; i++ {
+	//TODO improve this part
+	length := 0
+	for i >= 0 {
 		length += len(q.queue[i])
+		i--
 		//klog.Infof("%s Status prio %d %d", q.name, i, len(q.queue[i]))
 	}
 	if length == 0 {
