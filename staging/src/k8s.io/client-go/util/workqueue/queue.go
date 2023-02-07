@@ -175,11 +175,11 @@ func (q *Type) Get(blocking ...bool) (item interface{}, shutdown bool) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 	for q.isempty && !q.shuttingDown {
-		// if len(blocking) > 0 {
-		// 	if !blocking[0] {
-		// 		return nil, false
-		// 	}
-		// }
+		if len(blocking) > 0 {
+			if !blocking[0] {
+				return nil, false
+			}
+		}
 		q.cond.Wait()
 	}
 	if q.isempty {

@@ -62,6 +62,7 @@ import (
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/controller/replicaset/metrics"
+	"k8s.io/utils/clock"
 	"k8s.io/utils/integer"
 )
 
@@ -191,8 +192,11 @@ func (rsc *ReplicaSetController) Run(ctx context.Context, workers int) {
 		return
 	}
 
-	for i := 0; i < workers; i++ {
+	backoff := wait.NewJitteredBackoffManager(50*time.Millisecond, 0.0, &clock.RealClock{})
+	for i := 0; i < 5; i++ {
 		go wait.UntilWithContext(ctx, rsc.worker, time.Second)
+		t := backoff.Backoff()
+		<-t.C()
 	}
 
 	<-ctx.Done()
@@ -541,21 +545,27 @@ func getPodCriticality(pod *v1.Pod) int {
 // worker runs a worker thread that just dequeues items, processes them, and marks them done.
 // It enforces that the syncHandler is never invoked concurrently with the same key.
 func (rsc *ReplicaSetController) worker(ctx context.Context) {
+	var t clock.Timer
+	backoff := wait.NewJitteredBackoffManager(300*time.Millisecond, 0.0, &clock.RealClock{})
+	t = backoff.Backoff()
 	for rsc.processNextWorkItem(ctx) {
-		//time.Sleep(50 * time.Millisecond)
+		<-t.C()
+		t = backoff.Backoff()
 	}
 }
 
 func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
 	//klog.Infof("processNextWorkItem1 - GREPTAG Waiting for replicaset")
-	key, quit := rsc.queue.Get()
+	klog.Infof("Wake up replicaset manager!")
+	key, quit := rsc.queue.Get(false)
 	//klog.Infof("processNextWorkItem1 - GREPTAG Got replicaset %s", key)
 	if quit {
 		return false
 	}
-	// if key == nil {
-	// 	return true
-	// }
+	if key == nil {
+		return true
+	}
+	klog.Infof("Replicaset manager got %s!", key)
 
 	defer rsc.queue.Done(key)
 

@@ -196,14 +196,17 @@ func (tc *NoExecuteTaintManager) Run(ctx context.Context) {
 	// into channels.
 	go func(stopCh <-chan struct{}) {
 		for {
-			//time.Sleep(50 * time.Millisecond)
-			item, shutdown := tc.nodeUpdateQueue.Get()
+			time.Sleep(75 * time.Millisecond)
+			//klog.Infof("Wake up taint manager!")
+			item, shutdown := tc.nodeUpdateQueue.Get(false)
+
 			if shutdown {
 				break
 			}
 			if item == nil {
 				continue
 			}
+			//klog.Infof("Taint manager Got %s!", item)
 			nodeUpdate := item.(nodeUpdateItem)
 			hash := hash(nodeUpdate.nodeName, UpdateWorkerSize)
 			select {
@@ -356,7 +359,7 @@ func (tc *NoExecuteTaintManager) NodeUpdated(oldNode *v1.Node, newNode *v1.Node)
 	}
 
 	criticalityValue := getNodeAssurance(node)
-	klog.Infof("Appending node at prio %d", criticalityValue)
+	klog.Infof("Appending node %s at prio %d", node.Name, criticalityValue)
 	tc.nodeUpdateQueue.Add(updateItem, criticalityValue)
 }
 
@@ -373,6 +376,7 @@ func (tc *NoExecuteTaintManager) processPodOnNode(
 	tolerations []v1.Toleration,
 	taints []v1.Taint,
 	now time.Time,
+	firetime ...time.Time,
 ) {
 	if len(taints) == 0 {
 		tc.cancelWorkWithEvent(podNamespacedName)
@@ -382,7 +386,11 @@ func (tc *NoExecuteTaintManager) processPodOnNode(
 		klog.V(2).InfoS("Not all taints are tolerated after update for pod on node", "pod", podNamespacedName.String(), "node", nodeName)
 		// We're canceling scheduled work (if any), as we're going to delete the Pod right away.
 		tc.cancelWorkWithEvent(podNamespacedName)
-		tc.taintEvictionQueue.AddWork(ctx, NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace), time.Now(), time.Now())
+		ftime := time.Now()
+		if len(firetime) > 0 {
+			ftime = firetime[0]
+		}
+		tc.taintEvictionQueue.AddWork(ctx, NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace), time.Now(), ftime)
 		return
 	}
 	minTolerationTime := getMinTolerationTime(usedTolerations)
@@ -496,11 +504,12 @@ func (tc *NoExecuteTaintManager) handleNodeUpdate(ctx context.Context, nodeUpdat
 	}
 
 	now := time.Now()
-	for i := 2; i >= 0; i-- {
+	maxprio := 2
+	for i := 0; i < (maxprio + 1); i++ {
 		for _, pod := range pods {
-			if getPodCriticality(pod) == i {
+			if getPodCriticality(pod) == (maxprio - i) {
 				podNamespacedName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
-				tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod.Spec.Tolerations, taints, now)
+				tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod.Spec.Tolerations, taints, now, time.Now().Add(time.Duration(i)*5*time.Millisecond))
 			}
 		}
 	}
