@@ -19,6 +19,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -29,7 +30,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	appsv1listers "k8s.io/client-go/listers/apps/v1"
 	utilpod "k8s.io/kubernetes/pkg/api/v1/pod"
@@ -299,4 +300,32 @@ func GetNodeCondition(status *v1.NodeStatus, conditionType v1.NodeConditionType)
 		}
 	}
 	return -1, nil
+}
+
+// helper function: returns an int that represents the criticality of the pod
+// Critical pods must be prioritized
+func GetPodCriticality(pod *v1.Pod) int {
+	criticalityValue := 0
+	criticality, exist := pod.Labels["Criticality"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
+}
+
+// helper function: returns an int that represents the assurance of the node
+// In brief: a node with high assurance probably has critical pods on it, and must be prioritized
+func GetNodeAssurance(node *v1.Node) int {
+	criticalityValue := 0
+	criticality, exist := node.Annotations["Assurance"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
 }

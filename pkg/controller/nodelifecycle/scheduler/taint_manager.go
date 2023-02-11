@@ -22,7 +22,6 @@ import (
 	"hash/fnv"
 	"io"
 	"math"
-	"strconv"
 	"sync"
 	"time"
 
@@ -38,6 +37,8 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/kubernetes/pkg/apis/core/helper"
 	v1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
+	replicaset "k8s.io/kubernetes/pkg/controller/replicaset"
+	controllerutil "k8s.io/kubernetes/pkg/controller/util/node"
 
 	"k8s.io/klog/v2"
 )
@@ -110,6 +111,7 @@ func deletePodHandler(c clientset.Interface, emitEventFunc func(types.Namespaced
 		}
 		var err error
 		for i := 0; i < retries; i++ {
+			replicaset.RSCPOINTER.DeletePod(args.Pod)
 			err = c.CoreV1().Pods(ns).Delete(ctx, name, metav1.DeleteOptions{})
 			if err == nil {
 				break
@@ -195,8 +197,10 @@ func (tc *NoExecuteTaintManager) Run(ctx context.Context) {
 	// Functions that are responsible for taking work items out of the workqueues and putting them
 	// into channels.
 	go func(stopCh <-chan struct{}) {
+		interval := time.NewTicker(150 * time.Millisecond)
 		for {
-			time.Sleep(75 * time.Millisecond)
+			<-interval.C
+			//time.Sleep(150 * time.Millisecond)
 			//klog.Infof("Wake up taint manager!")
 			item, shutdown := tc.nodeUpdateQueue.Get(false)
 
@@ -220,7 +224,10 @@ func (tc *NoExecuteTaintManager) Run(ctx context.Context) {
 	}(ctx.Done())
 
 	go func(stopCh <-chan struct{}) {
+		interval := time.NewTicker(150 * time.Millisecond)
 		for {
+			<-interval.C
+			//time.Sleep(150 * time.Millisecond)
 			item, shutdown := tc.podUpdateQueue.Get()
 			if shutdown {
 				break
@@ -314,22 +321,8 @@ func (tc *NoExecuteTaintManager) PodUpdated(oldPod *v1.Pod, newPod *v1.Pod) {
 		nodeName:     nodeName,
 	}
 
-	criticalityValue := getPodCriticality(pod)
+	criticalityValue := controllerutil.GetPodCriticality(pod)
 	tc.podUpdateQueue.Add(updateItem, criticalityValue)
-}
-
-// helper function: returns an int that represents the criticality of the pod
-// Critical pods must be prioritized
-func getPodCriticality(pod *v1.Pod) int {
-	criticalityValue := 0
-	criticality, exist := pod.Labels["Criticality"]
-	if exist {
-		value, err := strconv.Atoi(criticality)
-		if err == nil {
-			criticalityValue = value
-		}
-	}
-	return criticalityValue
 }
 
 // NodeUpdated is used to notify NoExecuteTaintManager about Node changes.
@@ -358,7 +351,7 @@ func (tc *NoExecuteTaintManager) NodeUpdated(oldNode *v1.Node, newNode *v1.Node)
 		nodeName: nodeName,
 	}
 
-	criticalityValue := getNodeAssurance(node)
+	criticalityValue := controllerutil.GetNodeAssurance(node)
 	klog.Infof("Appending node %s at prio %d", node.Name, criticalityValue)
 	tc.nodeUpdateQueue.Add(updateItem, criticalityValue)
 }
@@ -373,6 +366,7 @@ func (tc *NoExecuteTaintManager) processPodOnNode(
 	ctx context.Context,
 	podNamespacedName types.NamespacedName,
 	nodeName string,
+	pod *v1.Pod,
 	tolerations []v1.Toleration,
 	taints []v1.Taint,
 	now time.Time,
@@ -390,7 +384,7 @@ func (tc *NoExecuteTaintManager) processPodOnNode(
 		if len(firetime) > 0 {
 			ftime = firetime[0]
 		}
-		tc.taintEvictionQueue.AddWork(ctx, NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace), time.Now(), ftime)
+		tc.taintEvictionQueue.AddWork(ctx, NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace, pod), time.Now(), ftime)
 		return
 	}
 	minTolerationTime := getMinTolerationTime(usedTolerations)
@@ -451,7 +445,7 @@ func (tc *NoExecuteTaintManager) handlePodUpdate(ctx context.Context, podUpdate 
 	if !ok {
 		return
 	}
-	tc.processPodOnNode(ctx, podNamespacedName, nodeName, pod.Spec.Tolerations, taints, time.Now())
+	tc.processPodOnNode(ctx, podNamespacedName, nodeName, pod, pod.Spec.Tolerations, taints, time.Now())
 }
 
 func (tc *NoExecuteTaintManager) handleNodeUpdate(ctx context.Context, nodeUpdate nodeUpdateItem) {
@@ -507,9 +501,9 @@ func (tc *NoExecuteTaintManager) handleNodeUpdate(ctx context.Context, nodeUpdat
 	maxprio := 2
 	for i := 0; i < (maxprio + 1); i++ {
 		for _, pod := range pods {
-			if getPodCriticality(pod) == (maxprio - i) {
+			if controllerutil.GetPodCriticality(pod) == (maxprio - i) {
 				podNamespacedName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
-				tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod.Spec.Tolerations, taints, now, time.Now().Add(time.Duration(i)*5*time.Millisecond))
+				tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod, pod.Spec.Tolerations, taints, now, time.Now().Add(time.Duration(i)*5*time.Millisecond))
 			}
 		}
 	}
@@ -537,18 +531,4 @@ func (tc *NoExecuteTaintManager) emitCancelPodDeletionEvent(nsName types.Namespa
 		Namespace: nsName.Namespace,
 	}
 	tc.recorder.Eventf(ref, v1.EventTypeNormal, "TaintManagerEviction", "Cancelling deletion of Pod %s", nsName.String())
-}
-
-// helper function: returns an int that represents the assurance of the node
-// In brief: a node with high assurance probably has critical pods on it, and must be prioritized
-func getNodeAssurance(node *v1.Node) int {
-	criticalityValue := 0
-	criticality, exist := node.Annotations["Assurance"]
-	if exist {
-		value, err := strconv.Atoi(criticality)
-		if err == nil {
-			criticalityValue = value
-		}
-	}
-	return criticalityValue
 }

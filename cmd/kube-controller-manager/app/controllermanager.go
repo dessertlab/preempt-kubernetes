@@ -422,7 +422,7 @@ func NewControllerInitializers(loopMode ControllerLoopMode) map[string]InitFunc 
 	controllers["endpoint"] = startEndpointController
 	controllers["endpointslice"] = startEndpointSliceController
 	controllers["endpointslicemirroring"] = startEndpointSliceMirroringController
-	controllers["replicationcontroller"] = startReplicationController
+	//controllers["replicationcontroller"] = startReplicationController
 	controllers["podgc"] = startPodGCController
 	controllers["resourcequota"] = startResourceQuotaController
 	controllers["namespace"] = startNamespaceController
@@ -433,7 +433,7 @@ func NewControllerInitializers(loopMode ControllerLoopMode) map[string]InitFunc 
 	controllers["deployment"] = startDeploymentController
 	controllers["replicaset"] = startReplicaSetController
 	controllers["horizontalpodautoscaling"] = startHPAController
-	controllers["disruption"] = startDisruptionController
+	//controllers["disruption"] = startDisruptionController
 	controllers["statefulset"] = startStatefulSetController
 	controllers["cronjob"] = startCronJobController
 	controllers["csrsigning"] = startCSRSigningController

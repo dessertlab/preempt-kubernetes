@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
@@ -29,6 +30,7 @@ import (
 // WorkArgs keeps arguments that will be passed to the function executed by the worker.
 type WorkArgs struct {
 	NamespacedName types.NamespacedName
+	Pod            *v1.Pod
 }
 
 // KeyFromWorkArgs creates a key for the given `WorkArgs`
@@ -37,8 +39,9 @@ func (w *WorkArgs) KeyFromWorkArgs() string {
 }
 
 // NewWorkArgs is a helper function to create new `WorkArgs`
-func NewWorkArgs(name, namespace string) *WorkArgs {
-	return &WorkArgs{types.NamespacedName{Namespace: namespace, Name: name}}
+func NewWorkArgs(name string, namespace string, pod *v1.Pod) *WorkArgs {
+	nn := types.NamespacedName{Namespace: namespace, Name: name}
+	return &WorkArgs{NamespacedName: nn, Pod: pod}
 }
 
 // TimedWorker is a responsible for executing a function no earlier than at FireAt time.

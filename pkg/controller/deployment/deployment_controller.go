@@ -29,7 +29,7 @@ import (
 	"k8s.io/klog/v2"
 
 	apps "k8s.io/api/apps/v1"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -157,9 +157,13 @@ func (dc *DeploymentController) Run(ctx context.Context, workers int) {
 		return
 	}
 
-	for i := 0; i < workers; i++ {
+	interval := time.NewTicker(450 * time.Millisecond)
+	for i := 0; i < 3; i++ {
 		go wait.UntilWithContext(ctx, dc.worker, time.Second)
+		klog.Infof("Delaying start of worker %d", i)
+		<-interval.C
 	}
+	interval.Stop()
 
 	<-ctx.Done()
 }
@@ -458,14 +462,20 @@ func (dc *DeploymentController) resolveControllerRef(namespace string, controlle
 // worker runs a worker thread that just dequeues items, processes them, and marks them done.
 // It enforces that the syncHandler is never invoked concurrently with the same key.
 func (dc *DeploymentController) worker(ctx context.Context) {
+	interval := time.NewTicker(450 * time.Millisecond)
 	for dc.processNextWorkItem(ctx) {
+		<-interval.C
 	}
 }
 
 func (dc *DeploymentController) processNextWorkItem(ctx context.Context) bool {
-	key, quit := dc.queue.Get()
+	key, quit := dc.queue.Get(false)
 	if quit {
 		return false
+	}
+
+	if key == nil {
+		return true
 	}
 	defer dc.queue.Done(key)
 
