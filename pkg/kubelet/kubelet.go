@@ -2050,6 +2050,9 @@ func (kl *Kubelet) syncLoop(updates <-chan kubetypes.PodUpdate, handler SyncHand
 		kl.dnsConfigurer.CheckLimitsForResolvConf()
 	}
 
+	addChan := make(chan kubetypes.PodUpdate)
+	go addHandlerPeriodic(addChan, handler)
+
 	for {
 		if err := kl.runtimeState.runtimeErrors(); err != nil {
 			klog.ErrorS(err, "Skipping pod synchronization")
@@ -2062,10 +2065,39 @@ func (kl *Kubelet) syncLoop(updates <-chan kubetypes.PodUpdate, handler SyncHand
 		duration = base
 
 		kl.syncLoopMonitor.Store(kl.clock.Now())
-		if !kl.syncLoopIteration(updates, handler, syncTicker.C, housekeepingTicker.C, plegCh) {
+		if !kl.syncLoopIteration(updates, handler, syncTicker.C, housekeepingTicker.C, plegCh, addChan) {
 			break
 		}
 		kl.syncLoopMonitor.Store(kl.clock.Now())
+	}
+}
+
+func addHandlerPeriodic(configCh <-chan kubetypes.PodUpdate, handler SyncHandler) {
+	timeToSleep := 2000.0
+	now := time.Now().Unix()
+	oldnow := time.Now().Unix()
+	for {
+		oldnow = now
+		u, open := <-configCh
+		now = time.Now().Unix()
+		if !open {
+			klog.ErrorS(nil, "Update channel is closed, exiting the sync loop")
+			return
+		}
+		switch u.Op {
+		case kubetypes.ADD:
+			klog.V(2).InfoS("SyncLoop ADD Delayed", "source", u.Source, "pods", klog.KObjs(u.Pods))
+			// After restarting, kubelet will get all existing pods through
+			// ADD as if they are new pods. These pods will then go through the
+			// admission process and *may* be rejected. This can be resolved
+			// once we have checkpointing.
+			handler.HandlePodAdditions(u.Pods)
+		}
+		if (now - oldnow) > 5 {
+			timeToSleep = 2000
+		}
+		time.Sleep(time.Duration(timeToSleep) * time.Millisecond)
+		timeToSleep = timeToSleep / float64(1.33)
 	}
 }
 
@@ -2102,7 +2134,7 @@ func (kl *Kubelet) syncLoop(updates <-chan kubetypes.PodUpdate, handler SyncHand
 //   - health manager: sync pods that have failed or in which one or more
 //     containers have failed health checks
 func (kl *Kubelet) syncLoopIteration(configCh <-chan kubetypes.PodUpdate, handler SyncHandler,
-	syncCh <-chan time.Time, housekeepingCh <-chan time.Time, plegCh <-chan *pleg.PodLifecycleEvent) bool {
+	syncCh <-chan time.Time, housekeepingCh <-chan time.Time, plegCh <-chan *pleg.PodLifecycleEvent, addchan chan kubetypes.PodUpdate) bool {
 	select {
 	case u, open := <-configCh:
 		// Update from a config source; dispatch it to the right handler
@@ -2119,7 +2151,8 @@ func (kl *Kubelet) syncLoopIteration(configCh <-chan kubetypes.PodUpdate, handle
 			// ADD as if they are new pods. These pods will then go through the
 			// admission process and *may* be rejected. This can be resolved
 			// once we have checkpointing.
-			handler.HandlePodAdditions(u.Pods)
+			//handler.HandlePodAdditions(u.Pods)
+			addchan <- u
 		case kubetypes.UPDATE:
 			klog.V(2).InfoS("SyncLoop UPDATE", "source", u.Source, "pods", klog.KObjs(u.Pods))
 			handler.HandlePodUpdates(u.Pods)

@@ -25,8 +25,11 @@ import (
 
 type Interface interface {
 	Add(item interface{}, priority ...int)
+	ValidateorAdd(item interface{}, priority int)
+	AddInvalid(item interface{}, priority int)
 	Len() int
-	Get(blocking ...bool) (item interface{}, shutdown bool)
+	Get() (item interface{}, shutdown bool)
+	GetDeterministic() (item interface{}, code int8)
 	Done(item interface{}, priority ...int)
 	ShutDown()
 	ShutDownWithDrain()
@@ -78,7 +81,9 @@ type Type struct {
 	// queue defines the order in which we will work on items. Every
 	// element of queue should be in the dirty set and not in the
 	// processing set.
-	queue   [CRITICALITIES][]t
+	queue [CRITICALITIES][]t
+	valid [CRITICALITIES][]bool
+
 	isempty bool
 
 	// dirty defines all of the items that need to be processed.
@@ -149,6 +154,85 @@ func (q *Type) Add(item interface{}, priority ...int) {
 		}
 	}
 	q.queue[prio] = append(q.queue[prio], item)
+	q.valid[prio] = append(q.valid[prio], true)
+
+	//klog.Infof("%s GREPTAG Item added at prio signaling %d", q.name, prio)
+	q.isempty = false
+
+	q.cond.Signal()
+}
+
+// Add marks item as needing processing.
+// Item is not yet really in the queue, just setting order
+// No signal is called here and empty is not changed
+// WARNING: SHOULD NOT BE USED TOGETHER WITH GET
+// GET IGNORES THE VALID FIELD
+func (q *Type) AddInvalid(item interface{}, prio int) {
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
+	if q.shuttingDown {
+		return
+	}
+	if q.dirty.has(item) {
+		return
+	}
+
+	q.metrics.add(item)
+
+	q.dirty.insert(item)
+	if q.processing.has(item) {
+		return
+	}
+
+	if prio > CRITICALITIES-1 {
+		prio = CRITICALITIES - 1
+	}
+
+	q.queue[prio] = append(q.queue[prio], item)
+	q.valid[prio] = append(q.valid[prio], false)
+
+	//klog.Infof("%s GREPTAG Item added at prio signaling %d", q.name, prio)
+}
+
+// Set the item as valid now and signal blocked Get, if not present Add
+// empty is set to false and signal called, as if it was and Add
+func (q *Type) ValidateorAdd(item interface{}, prio int) {
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
+	if q.shuttingDown {
+		return
+	}
+
+	if prio > CRITICALITIES-1 {
+		prio = CRITICALITIES - 1
+	}
+
+	// if element is dirty, it means either that it is in the queue and invalid
+	// or that it has been added after being get, in that case we behave normally.
+	// The item cannot be processing if invalid, thus only dirty condition is to be checked
+	if q.dirty.has(item) {
+		for i := 0; i < len(q.queue[prio]); i++ {
+			itemf := q.queue[prio][i]
+			if item == itemf && !q.valid[prio][i] {
+				q.valid[prio][i] = true
+				q.isempty = false
+				q.cond.Signal()
+				return
+			}
+		}
+		return
+	}
+
+	q.metrics.add(item)
+
+	q.dirty.insert(item)
+	if q.processing.has(item) {
+		return
+	}
+
+	q.queue[prio] = append(q.queue[prio], item)
+	q.valid[prio] = append(q.valid[prio], true)
+
 	//klog.Infof("%s GREPTAG Item added at prio signaling %d", q.name, prio)
 	q.isempty = false
 
@@ -171,15 +255,11 @@ func (q *Type) Len() int {
 // Get blocks until it can return an item to be processed. If shutdown = true,
 // the caller should end their goroutine. You must call Done with item when you
 // have finished processing it.
-func (q *Type) Get(blocking ...bool) (item interface{}, shutdown bool) {
+// It assumes the element is valid, and returns the highest prio elem.
+func (q *Type) Get() (item interface{}, shutdown bool) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 	for q.isempty && !q.shuttingDown {
-		if len(blocking) > 0 {
-			if !blocking[0] {
-				return nil, false
-			}
-		}
 		q.cond.Wait()
 	}
 	if q.isempty {
@@ -195,8 +275,69 @@ func (q *Type) Get(blocking ...bool) (item interface{}, shutdown bool) {
 			// so the object will not be garbage collected.
 			q.queue[i][0] = nil
 			q.queue[i] = q.queue[i][1:]
+			q.valid[i] = q.valid[i][1:]
 			//klog.Infof("%s Item found at prio %d", q.name, i)
 			break
+		}
+	}
+
+	//TODO improve this part
+	length := 0
+	for i >= 0 {
+		length += len(q.queue[i])
+		i--
+		//klog.Infof("%s Status prio %d %d", q.name, i, len(q.queue[i]))
+	}
+
+	if length == 0 {
+		q.isempty = true
+		//klog.Infof("Empty queue ")
+	}
+
+	q.metrics.get(item)
+
+	q.processing.insert(item)
+	q.dirty.delete(item)
+
+	return item, false
+}
+
+// GetDeterministic is non blocking, returns special codes for aborted exec
+// If shutdown = true, the caller should end their goroutine.
+// You must call Done with item when you
+// have finished processing it.
+// codes are: 0 ok, 1 shutdown, 2 empty, 3 invalid
+// It returns the highest prio elem.
+func (q *Type) GetDeterministic() (item interface{}, code int8) {
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
+
+	if q.isempty && !q.shuttingDown {
+		return nil, 2
+	}
+
+	if q.isempty {
+		// We must be shutting down.
+		return nil, 1
+	}
+
+	var i int8
+	for i = CRITICALITIES - 1; i >= 0; i-- {
+		if len(q.queue[i]) != 0 {
+			if q.valid[i][0] {
+				item = q.queue[i][0]
+				// The underlying array still exists and reference this object,
+				// so the object will not be garbage collected.
+				q.queue[i][0] = nil
+				q.queue[i] = q.queue[i][1:]
+				q.valid[i] = q.valid[i][1:]
+				//klog.Infof("%s Item found at prio %d", q.name, i)
+				break
+			} else {
+				return nil, 3
+				//TODO: handle remotion of never-validated items after retrials
+				// add another function?
+			}
 		}
 	}
 
@@ -217,7 +358,7 @@ func (q *Type) Get(blocking ...bool) (item interface{}, shutdown bool) {
 	q.processing.insert(item)
 	q.dirty.delete(item)
 
-	return item, false
+	return item, 0
 }
 
 // Done marks item as done processing, and if it has been marked as dirty again
@@ -239,6 +380,7 @@ func (q *Type) Done(item interface{}, priority ...int) {
 			}
 		}
 		q.queue[prio] = append(q.queue[prio], item)
+		q.valid[prio] = append(q.valid[prio], true)
 		//klog.Infof("%s Item done at prio %d", q.name, prio)
 		q.isempty = false
 		q.cond.Signal()

@@ -491,7 +491,43 @@ func (rsc *ReplicaSetController) updatePod(old, cur interface{}) {
 }
 
 func (rsc *ReplicaSetController) DeletePod(obj interface{}) {
-	rsc.deletePod(obj)
+	pod, ok := obj.(*v1.Pod)
+
+	// When a delete is dropped, the relist will notice a pod in the store not
+	// in the list, leading to the insertion of a tombstone object which contains
+	// the deleted key/value. Note that this value might be stale. If the pod
+	// changed labels the new ReplicaSet will not be woken up till the periodic resync.
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("couldn't get object from tombstone %+v", obj))
+			return
+		}
+		pod, ok = tombstone.Obj.(*v1.Pod)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("tombstone contained object that is not a pod %#v", obj))
+			return
+		}
+	}
+
+	controllerRef := metav1.GetControllerOf(pod)
+	if controllerRef == nil {
+		// No controller should care about orphans being deleted.
+		return
+	}
+	rs := rsc.resolveControllerRef(pod.Namespace, controllerRef)
+	if rs == nil {
+		return
+	}
+	rsKey, err := controller.KeyFunc(rs)
+	if err != nil {
+		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %#v: %v", rs, err))
+		return
+	}
+	klog.V(4).Infof("Pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, utilruntime.GetCaller(), pod.DeletionTimestamp, pod)
+	rsc.expectations.DeletionObserved(rsKey, controller.PodKey(pod))
+	//klog.Infof("DeletePod - GREPTAG Appending replicaset invaloid %s at prio %d", rs.Name, controllerutil.GetPodCriticality(pod))
+	rsc.queue.AddInvalid(rsKey, controllerutil.GetPodCriticality(pod))
 }
 
 // When a pod is deleted, enqueue the replica set that manages the pod and update its expectations.
@@ -532,8 +568,8 @@ func (rsc *ReplicaSetController) deletePod(obj interface{}) {
 	}
 	klog.V(4).Infof("Pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, utilruntime.GetCaller(), pod.DeletionTimestamp, pod)
 	rsc.expectations.DeletionObserved(rsKey, controller.PodKey(pod))
-	//klog.Infof("deletePod - GREPTAG Appending replicaset %s at prio %d", rs.Name, getPodCriticality(pod))
-	rsc.queue.Add(rsKey, controllerutil.GetPodCriticality(pod))
+	//klog.Infof("deletePod - GREPTAG Valid or add %s at prio %d", rs.Name, controllerutil.GetPodCriticality(pod))
+	rsc.queue.ValidateorAdd(rsKey, controllerutil.GetPodCriticality(pod))
 }
 
 // worker runs a worker thread that just dequeues items, processes them, and marks them done.
@@ -547,15 +583,31 @@ func (rsc *ReplicaSetController) worker(ctx context.Context) {
 }
 
 func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
-	klog.Infof("processNextWorkItem1 - GREPTAG Waiting for replicaset")
-	key, quit := rsc.queue.Get(false)
+	//klog.Infof("processNextWorkItem1 - GREPTAG Waiting for replicaset")
+	key, code := rsc.queue.GetDeterministic()
 
-	if quit {
-		return false
+	for code != 0 {
+		if code == 2 {
+			//klog.Infof("process - GREPTAG empty")
+			return true
+		}
+
+		if code == 1 {
+			return false
+		}
+
+		retrials := 0
+		for code == 3 {
+			//klog.Infof("process - GREPTAG invalid")
+			retrials += 1
+			if retrials > 2 {
+				return true
+			}
+			time.Sleep(10 * time.Millisecond)
+			key, code = rsc.queue.GetDeterministic()
+		}
 	}
-	if key == nil {
-		return true
-	}
+
 	//klog.Infof("processNextWorkItem1 - GREPTAG Got replicaset %s", key)
 
 	defer rsc.queue.Done(key)

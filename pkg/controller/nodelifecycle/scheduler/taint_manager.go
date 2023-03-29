@@ -202,14 +202,15 @@ func (tc *NoExecuteTaintManager) Run(ctx context.Context) {
 			<-interval.C
 			//time.Sleep(150 * time.Millisecond)
 			//klog.Infof("Wake up taint manager!")
-			item, shutdown := tc.nodeUpdateQueue.Get(false)
+			item, code := tc.nodeUpdateQueue.GetDeterministic()
 
-			if shutdown {
-				break
-			}
-			if item == nil {
+			if code == 2 || code == 3 {
 				continue
 			}
+			if code == 1 {
+				break
+			}
+
 			//klog.Infof("Taint manager Got %s!", item)
 			nodeUpdate := item.(nodeUpdateItem)
 			hash := hash(nodeUpdate.nodeName, UpdateWorkerSize)
@@ -228,8 +229,13 @@ func (tc *NoExecuteTaintManager) Run(ctx context.Context) {
 		for {
 			<-interval.C
 			//time.Sleep(150 * time.Millisecond)
-			item, shutdown := tc.podUpdateQueue.Get()
-			if shutdown {
+			item, code := tc.podUpdateQueue.GetDeterministic()
+
+			if code == 2 {
+				continue
+			}
+
+			if code == 1 {
 				break
 			}
 			// The fact that pods are processed by the same worker as nodes is used to avoid races
@@ -405,7 +411,7 @@ func (tc *NoExecuteTaintManager) processPodOnNode(
 		}
 		tc.cancelWorkWithEvent(podNamespacedName)
 	}
-	tc.taintEvictionQueue.AddWork(ctx, NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace), startTime, triggerTime)
+	tc.taintEvictionQueue.AddWork(ctx, NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace, pod), startTime, triggerTime)
 }
 
 func (tc *NoExecuteTaintManager) handlePodUpdate(ctx context.Context, podUpdate podUpdateItem) {

@@ -469,14 +469,16 @@ func (dc *DeploymentController) worker(ctx context.Context) {
 }
 
 func (dc *DeploymentController) processNextWorkItem(ctx context.Context) bool {
-	key, quit := dc.queue.Get(false)
-	if quit {
+	key, code := dc.queue.GetDeterministic()
+
+	if code == 2 || code == 3 {
+		return true
+	}
+
+	if code == 1 {
 		return false
 	}
 
-	if key == nil {
-		return true
-	}
 	defer dc.queue.Done(key)
 
 	err := dc.syncHandler(ctx, key.(string))
