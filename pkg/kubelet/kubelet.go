@@ -2076,7 +2076,12 @@ func (kl *Kubelet) syncLoop(updates <-chan kubetypes.PodUpdate, handler SyncHand
 		kl.syncLoopMonitor.Store(kl.clock.Now())
 	}
 }
-func handleAdditionHelper(u kubetypes.PodUpdate, handler SyncHandler) {
+func handleevent(u kubetypes.PodUpdate, handler SyncHandler) {
+
+	// if !open {
+	// 	klog.ErrorS(nil, "Update channel is closed, exiting the sync loop")
+	// 	return
+	// }
 	switch u.Op {
 	case kubetypes.ADD:
 		klog.V(2).InfoS("SyncLoop ADD Delayed", "source", u.Source, "pods", klog.KObjs(u.Pods))
@@ -2089,47 +2094,34 @@ func handleAdditionHelper(u kubetypes.PodUpdate, handler SyncHandler) {
 }
 
 func addHandlerPeriodic(lowprio, hiprio <-chan kubetypes.PodUpdate, handler SyncHandler) {
-	timeToSleep := 2000.0
+	timeToSleep := 2700.0
 	now := time.Now().Unix()
 	oldnow := time.Now().Unix()
 	for {
 		oldnow = now
-		// sample the queues in priority order
 		select {
-		// improve this, refactor duplicated code
-		case u, open := <-hiprio:
+		case u := <-hiprio:
 			now = time.Now().Unix()
-			if !open {
-				klog.ErrorS(nil, "AddChannel is closed, exiting the sync loop")
-				return
-			}
-			handleAdditionHelper(u, handler)
+			klog.InfoS("Got Item hiprio, pods:", klog.KObjs(u.Pods))
+			handleevent(u, handler)
 		default:
 			select {
-			case u, open := <-hiprio:
+			case u := <-hiprio:
 				now = time.Now().Unix()
-				if !open {
-					klog.ErrorS(nil, "AddChannel is closed, exiting the sync loop")
-					return
-				}
-				handleAdditionHelper(u, handler)
-			case u, open := <-lowprio:
+				klog.InfoS("Got Item hiprio, pods:", klog.KObjs(u.Pods))
+				handleevent(u, handler)
+			case u := <-lowprio:
 				now = time.Now().Unix()
-				if !open {
-					klog.ErrorS(nil, "AddChannel is closed, exiting the sync loop")
-					return
-				}
-				handleAdditionHelper(u, handler)
+				klog.InfoS("Got Item low, pods:", klog.KObjs(u.Pods))
+				handleevent(u, handler)
 			}
 		}
-		// after 5 seconds of inactivity, backoff time is reset
 		if (now - oldnow) > 5 {
-			timeToSleep = 2000
+			timeToSleep = 2700.0
 		}
-		//klog.InfoS("Sleeping for ", timeToSleep)
+		klog.InfoS("Sleeping for ", timeToSleep)
 		time.Sleep(time.Duration(timeToSleep) * time.Millisecond)
-		// exponential decay
-		timeToSleep = timeToSleep / float64(1.33)
+		timeToSleep = timeToSleep / float64(1.7)
 	}
 }
 
@@ -2181,7 +2173,6 @@ func (kl *Kubelet) syncLoopIteration(configCh <-chan kubetypes.PodUpdate, handle
 			klog.V(2).InfoS("SyncLoop ADD", "source", u.Source, "pods", klog.KObjs(u.Pods))
 
 			// multi-priority kubelet
-			// enqueue following the maximum priority between received pods
 			criticalityValue := 0
 			for _, pod := range u.Pods {
 				if controllerutil.GetPodCriticality(pod) > criticalityValue {
@@ -2189,13 +2180,13 @@ func (kl *Kubelet) syncLoopIteration(configCh <-chan kubetypes.PodUpdate, handle
 				}
 			}
 			klog.InfoS("Added Item at Prio ", criticalityValue, " pods", klog.KObjs(u.Pods))
+			//queue.Add(u, criticalityValue)
+			// end of multi-priority kubelet
 
 			// After restarting, kubelet will get all existing pods through
 			// ADD as if they are new pods. These pods will then go through the
 			// admission process and *may* be rejected. This can be resolved
 			// once we have checkpointing.
-
-			// use two queues, one for prio 0 and one for the others
 			if criticalityValue > 0 {
 				addchan <- u
 			} else {
