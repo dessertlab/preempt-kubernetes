@@ -47,6 +47,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/controller/deployment/util"
+	controllerutil "k8s.io/kubernetes/pkg/controller/util/node"
 )
 
 const (
@@ -95,6 +96,9 @@ type DeploymentController struct {
 
 	// Deployments that need to be synced
 	queue workqueue.RateLimitingInterface
+
+	// Period Manager that controls the waking time of workers
+	periodMan *controllerutil.PeriodManager
 }
 
 // NewDeploymentController creates a new DeploymentController.
@@ -106,6 +110,8 @@ func NewDeploymentController(ctx context.Context, dInformer appsinformers.Deploy
 		eventBroadcaster: eventBroadcaster,
 		eventRecorder:    eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "deployment-controller"}),
 		queue:            workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "deployment"),
+		//TODO: Ulysses imrpove parameters of period manager
+		periodMan:		  controllerutil.NewPeriodManager(200,450,3),
 	}
 	dc.rsControl = controller.RealRSControl{
 		KubeClient: client,
@@ -172,9 +178,17 @@ func (dc *DeploymentController) Run(ctx context.Context, workers int) {
 		return
 	}
 
-	for i := 0; i < workers; i++ {
+	// for i := 0; i < workers; i++ {
+	// 	go wait.UntilWithContext(ctx, dc.worker, time.Second)
+	// }
+	interval := time.NewTicker(20 * time.Millisecond)
+	for i := 0; i < 3; i++ {
 		go wait.UntilWithContext(ctx, dc.worker, time.Second)
+		klog.Infof("Delaying start of worker %d", i)
+		<-interval.C
 	}
+	go dc.periodMan.Dispatch()
+	interval.Stop()
 
 	<-ctx.Done()
 }
@@ -475,15 +489,28 @@ func (dc *DeploymentController) resolveControllerRef(namespace string, controlle
 // worker runs a worker thread that just dequeues items, processes them, and marks them done.
 // It enforces that the syncHandler is never invoked concurrently with the same key.
 func (dc *DeploymentController) worker(ctx context.Context) {
+	// interval := time.NewTicker(20 * time.Millisecond)
+	// for dc.processNextWorkItem(ctx) {
+	// 	<-interval.C
+	// }
 	for dc.processNextWorkItem(ctx) {
+		dc.periodMan.WaitPeriod()
 	}
 }
 
 func (dc *DeploymentController) processNextWorkItem(ctx context.Context) bool {
-	key, quit := dc.queue.Get()
-	if quit {
+	//key, quit := dc.queue.Get()
+	//if quit {
+	key, code := dc.queue.GetDeterministic()
+
+	if code == 2 || code == 3 {
+		return true
+	}
+
+	if code == 1 {
 		return false
 	}
+	//}
 	defer dc.queue.Done(key)
 
 	err := dc.syncHandler(ctx, key.(string))

@@ -607,6 +607,7 @@ func (dc *DisruptionController) getPodsForPdb(pdb *policy.PodDisruptionBudget) (
 
 func (dc *DisruptionController) worker(ctx context.Context) {
 	for dc.processNextWorkItem(ctx) {
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

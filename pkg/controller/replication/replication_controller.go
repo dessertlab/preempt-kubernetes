@@ -34,6 +34,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/controller/replicaset"
+	controllerutil "k8s.io/kubernetes/pkg/controller/util/node"
 )
 
 const (
@@ -60,6 +61,7 @@ func NewReplicationManager(logger klog.Logger, podInformer coreinformers.PodInfo
 				Recorder:   eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "replication-controller"}),
 			}},
 			eventBroadcaster,
+			controllerutil.NewPeriodManager(200,450,3),
 		),
 	}
 }

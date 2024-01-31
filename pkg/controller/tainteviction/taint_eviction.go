@@ -47,6 +47,7 @@ import (
 	controllerutil "k8s.io/kubernetes/pkg/controller/util/node"
 	"k8s.io/kubernetes/pkg/features"
 	utilpod "k8s.io/kubernetes/pkg/util/pod"
+	replicaset "k8s.io/kubernetes/pkg/controller/replicaset"
 )
 
 const (
@@ -104,6 +105,9 @@ type Controller struct {
 
 	nodeUpdateQueue workqueue.Interface
 	podUpdateQueue  workqueue.Interface
+
+	// Period Manager that controls the waking time of workers
+	periodMan *controllerutil.PeriodManager
 }
 
 func deletePodHandler(c clientset.Interface, emitEventFunc func(types.NamespacedName), controllerName string) func(ctx context.Context, fireAt time.Time, args *WorkArgs) error {
@@ -116,6 +120,8 @@ func deletePodHandler(c clientset.Interface, emitEventFunc func(types.Namespaced
 		}
 		var err error
 		for i := 0; i < retries; i++ {
+			// TODO: ulysses check changes, check klog.FromContext(ctx)
+			replicaset.RSCPOINTER.DeletePod(klog.FromContext(ctx), args.Pod)
 			err = addConditionAndDeletePod(ctx, c, name, ns)
 			if err == nil {
 				metrics.PodDeletionsTotal.Inc()
@@ -222,6 +228,8 @@ func New(ctx context.Context, c clientset.Interface, podInformer corev1informers
 
 		nodeUpdateQueue: workqueue.NewWithConfig(workqueue.QueueConfig{Name: "noexec_taint_node"}),
 		podUpdateQueue:  workqueue.NewWithConfig(workqueue.QueueConfig{Name: "noexec_taint_pod"}),
+		//TODO: Ulysses improve parameters period
+		periodMan: controllerutil.NewPeriodManager(50,200,2),
 	}
 	tm.taintEvictionQueue = CreateWorkerQueue(deletePodHandler(c, tm.emitPodDeletionEvent, tm.name))
 
@@ -308,14 +316,28 @@ func (tc *Controller) Run(ctx context.Context) {
 		tc.podUpdateChannels = append(tc.podUpdateChannels, make(chan podUpdateItem, podUpdateChannelSize))
 	}
 
+	// Start dispatching timing signals
+	go tc.periodMan.Dispatch()
+
 	// Functions that are responsible for taking work items out of the workqueues and putting them
 	// into channels.
 	go func(stopCh <-chan struct{}) {
+		//interval := time.NewTicker(150 * time.Millisecond)
 		for {
-			item, shutdown := tc.nodeUpdateQueue.Get()
-			if shutdown {
-				break
+			// item, shutdown := tc.nodeUpdateQueue.Get()
+			// if shutdown {
+			//<-interval.C
+			tc.periodMan.WaitPeriod()
+			item, code := tc.nodeUpdateQueue.GetDeterministic()
+
+			if code == 2 || code == 3 {
+				continue
 			}
+			if code == 1 {
+					break
+			}
+			//klog.Infof("Taint manager Got %s!", item)
+
 			nodeUpdate := item.(nodeUpdateItem)
 			hash := hash(nodeUpdate.nodeName, UpdateWorkerSize)
 			select {
@@ -329,9 +351,19 @@ func (tc *Controller) Run(ctx context.Context) {
 	}(ctx.Done())
 
 	go func(stopCh <-chan struct{}) {
+		//interval := time.NewTicker(150 * time.Millisecond)
 		for {
-			item, shutdown := tc.podUpdateQueue.Get()
-			if shutdown {
+			//item, shutdown := tc.podUpdateQueue.Get()
+			//if shutdown {
+			//<-interval.C
+			tc.periodMan.WaitPeriod()
+			item, code := tc.podUpdateQueue.GetDeterministic()
+
+			if code == 2 {
+				continue
+			}
+
+			if code == 1 {
 				break
 			}
 			// The fact that pods are processed by the same worker as nodes is used to avoid races
@@ -396,12 +428,14 @@ func (tc *Controller) PodUpdated(oldPod *v1.Pod, newPod *v1.Pod) {
 	podName := ""
 	podNamespace := ""
 	nodeName := ""
+	var pod *v1.Pod
 	oldTolerations := []v1.Toleration{}
 	if oldPod != nil {
 		podName = oldPod.Name
 		podNamespace = oldPod.Namespace
 		nodeName = oldPod.Spec.NodeName
 		oldTolerations = oldPod.Spec.Tolerations
+		pod = oldPod
 	}
 	newTolerations := []v1.Toleration{}
 	if newPod != nil {
@@ -409,6 +443,7 @@ func (tc *Controller) PodUpdated(oldPod *v1.Pod, newPod *v1.Pod) {
 		podNamespace = newPod.Namespace
 		nodeName = newPod.Spec.NodeName
 		newTolerations = newPod.Spec.Tolerations
+		pod = newPod
 	}
 
 	if oldPod != nil && newPod != nil && helper.Semantic.DeepEqual(oldTolerations, newTolerations) && oldPod.Spec.NodeName == newPod.Spec.NodeName {
@@ -420,22 +455,28 @@ func (tc *Controller) PodUpdated(oldPod *v1.Pod, newPod *v1.Pod) {
 		nodeName:     nodeName,
 	}
 
-	tc.podUpdateQueue.Add(updateItem)
+	//tc.podUpdateQueue.Add(updateItem)
+	criticalityValue := controllerutil.GetPodCriticality(pod)
+	tc.podUpdateQueue.Add(updateItem, criticalityValue)
 }
 
 // NodeUpdated is used to notify NoExecuteTaintManager about Node changes.
 func (tc *Controller) NodeUpdated(oldNode *v1.Node, newNode *v1.Node) {
 	nodeName := ""
+	var node *v1.Node
+
 	oldTaints := []v1.Taint{}
 	if oldNode != nil {
 		nodeName = oldNode.Name
 		oldTaints = getNoExecuteTaints(oldNode.Spec.Taints)
+		node = oldNode
 	}
 
 	newTaints := []v1.Taint{}
 	if newNode != nil {
 		nodeName = newNode.Name
 		newTaints = getNoExecuteTaints(newNode.Spec.Taints)
+		node = newNode
 	}
 
 	if oldNode != nil && newNode != nil && helper.Semantic.DeepEqual(oldTaints, newTaints) {
@@ -445,7 +486,10 @@ func (tc *Controller) NodeUpdated(oldNode *v1.Node, newNode *v1.Node) {
 		nodeName: nodeName,
 	}
 
-	tc.nodeUpdateQueue.Add(updateItem)
+	//tc.nodeUpdateQueue.Add(updateItem)
+	criticalityValue := controllerutil.GetNodeAssurance(node)
+	klog.Infof("Appending node %s at prio %d", node.Name, criticalityValue)
+	tc.nodeUpdateQueue.Add(updateItem, criticalityValue)
 }
 
 func (tc *Controller) cancelWorkWithEvent(logger klog.Logger, nsName types.NamespacedName) {
@@ -458,9 +502,11 @@ func (tc *Controller) processPodOnNode(
 	ctx context.Context,
 	podNamespacedName types.NamespacedName,
 	nodeName string,
+	pod *v1.Pod,
 	tolerations []v1.Toleration,
 	taints []v1.Taint,
 	now time.Time,
+	firetime ...time.Time,
 ) {
 	logger := klog.FromContext(ctx)
 	if len(taints) == 0 {
@@ -471,7 +517,12 @@ func (tc *Controller) processPodOnNode(
 		logger.V(2).Info("Not all taints are tolerated after update for pod on node", "pod", podNamespacedName.String(), "node", klog.KRef("", nodeName))
 		// We're canceling scheduled work (if any), as we're going to delete the Pod right away.
 		tc.cancelWorkWithEvent(logger, podNamespacedName)
-		tc.taintEvictionQueue.AddWork(ctx, NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace), time.Now(), time.Now())
+		//tc.taintEvictionQueue.AddWork(ctx, NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace), time.Now(), time.Now())
+		ftime := time.Now()
+		if len(firetime) > 0 {
+			ftime = firetime[0]
+		}
+		tc.taintEvictionQueue.AddWork(ctx, NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace, pod), time.Now(), ftime)
 		return
 	}
 	minTolerationTime := getMinTolerationTime(usedTolerations)
@@ -492,7 +543,8 @@ func (tc *Controller) processPodOnNode(
 		}
 		tc.cancelWorkWithEvent(logger, podNamespacedName)
 	}
-	tc.taintEvictionQueue.AddWork(ctx, NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace), startTime, triggerTime)
+	//tc.taintEvictionQueue.AddWork(ctx, NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace), startTime, triggerTime)
+	tc.taintEvictionQueue.AddWork(ctx, NewWorkArgs(podNamespacedName.Name, podNamespacedName.Namespace, pod), startTime, triggerTime)
 }
 
 func (tc *Controller) handlePodUpdate(ctx context.Context, podUpdate podUpdateItem) {
@@ -533,7 +585,8 @@ func (tc *Controller) handlePodUpdate(ctx context.Context, podUpdate podUpdateIt
 	if !ok {
 		return
 	}
-	tc.processPodOnNode(ctx, podNamespacedName, nodeName, pod.Spec.Tolerations, taints, time.Now())
+	//tc.processPodOnNode(ctx, podNamespacedName, nodeName, pod.Spec.Tolerations, taints, time.Now())
+	tc.processPodOnNode(ctx, podNamespacedName, nodeName, pod, pod.Spec.Tolerations, taints, time.Now())
 }
 
 func (tc *Controller) handleNodeUpdate(ctx context.Context, nodeUpdate nodeUpdateItem) {
@@ -587,9 +640,16 @@ func (tc *Controller) handleNodeUpdate(ctx context.Context, nodeUpdate nodeUpdat
 	}
 
 	now := time.Now()
-	for _, pod := range pods {
-		podNamespacedName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
-		tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod.Spec.Tolerations, taints, now)
+	// TODO: Ulysses improve parametrization
+	maxprio := 2
+    for i := 0; i < (maxprio + 1); i++ {
+		for _, pod := range pods {
+			if controllerutil.GetPodCriticality(pod) == (maxprio - i) {
+			podNamespacedName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
+			//tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod.Spec.Tolerations, taints, now)
+			tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod, pod.Spec.Tolerations, taints, now, time.Now().Add(time.Duration(i)*5*time.Millisecond))
+			}
+		}
 	}
 }
 

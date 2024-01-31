@@ -19,6 +19,8 @@ package node
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -301,4 +303,104 @@ func GetNodeCondition(status *v1.NodeStatus, conditionType v1.NodeConditionType)
 		}
 	}
 	return -1, nil
+}
+
+// helper function: returns an int that represents the criticality of the pod
+// Critical pods must be prioritized
+func GetPodCriticality(pod *v1.Pod) int {
+	criticalityValue := 0
+	criticality, exist := pod.Labels["Criticality"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
+}
+
+// helper function: returns an int that represents the assurance of the node
+// In brief: a node with high assurance probably has critical pods on it, and must be prioritized
+func GetNodeAssurance(node *v1.Node) int {
+	criticalityValue := 0
+	criticality, exist := node.Annotations["Assurance"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
+}
+
+// Period manager implementation. One period manager for each controller that wants to use it.
+type PeriodManager struct {
+	minPeriod  		uint32
+	maxPeriod  		uint32
+	currentPeriod 		uint32
+	pressure   		uint32
+	workersNumber 		uint32
+	timer 			*time.Ticker
+	tickers			[]chan time.Time
+	index			int
+	sleepingindex		int
+	change			bool
+}
+
+func NewPeriodManager(minPeriod, maxPeriod, workersNumber uint32) *PeriodManager {
+	timer := time.NewTicker(time.Duration(minPeriod / workersNumber) * time.Millisecond)
+	taskChannels := make([]chan time.Time, workersNumber)
+	for i := 0; i < int(workersNumber); i++ {
+		taskChannels[i] = make(chan time.Time)
+	}
+	return &PeriodManager{
+		minPeriod:  	minPeriod,
+		maxPeriod:  	maxPeriod,
+		currentPeriod: 	minPeriod,
+		pressure:   	0,
+		workersNumber: 	workersNumber,
+		timer:		timer,
+		tickers: 	taskChannels,
+		index:		0,
+		change:		false,
+		sleepingindex:	0,
+	}
+}
+
+// Increase and decrease pressure change the period accordingly to equation:
+func (p *PeriodManager) IncreasePressure(step uint32) {
+	p.pressure += step
+	increment := uint32((p.maxPeriod - p.currentPeriod) / (p.pressure+1))
+	p.currentPeriod += increment
+	p.change = true
+}
+
+func (p *PeriodManager) DecreasePressure(step uint32) {
+	p.pressure -= step
+	if p.pressure < 0 {
+		p.pressure = 0
+	}
+	decrement := uint32((p.currentPeriod - p.minPeriod) / (p.pressure+1))
+	p.currentPeriod -= decrement
+	p.change = true
+}
+
+func (p *PeriodManager) Dispatch() {
+	for {
+		<- p.timer.C
+		if p.change {
+			p.timer = time.NewTicker(time.Duration(p.currentPeriod / p.workersNumber) * time.Millisecond)
+		}
+		p.tickers[p.index] <- time.Now()
+		p.index = (p.index+1)%int(p.workersNumber)
+	}
+}
+func (p *PeriodManager) GetSleepingTime() int {
+	return int(p.currentPeriod / p.workersNumber)
+
+}
+
+func (pm *PeriodManager) WaitPeriod() {
+	<-pm.tickers[pm.sleepingindex]
+	pm.sleepingindex = (pm.sleepingindex + 1)%int(pm.workersNumber)
 }

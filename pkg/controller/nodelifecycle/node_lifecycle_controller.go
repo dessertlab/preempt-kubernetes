@@ -425,11 +425,16 @@ func NewNodeLifecycleController(
 	logger.Info("Controller will reconcile labels")
 	nodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: controllerutil.CreateAddNodeHandler(func(node *v1.Node) error {
-			nc.nodeUpdateQueue.Add(node.Name)
+			//nc.nodeUpdateQueue.Add(node.Name)
+			criticalityValue := controllerutil.GetNodeAssurance(node)
+			nc.nodeUpdateQueue.Add(node.Name, criticalityValue)
 			return nil
 		}),
 		UpdateFunc: controllerutil.CreateUpdateNodeHandler(func(_, newNode *v1.Node) error {
-			nc.nodeUpdateQueue.Add(newNode.Name)
+			//nc.nodeUpdateQueue.Add(newNode.Name)
+			criticalityValue := controllerutil.GetNodeAssurance(newNode)
+			klog.Infof("Appending node prio %d", criticalityValue)
+			nc.nodeUpdateQueue.Add(newNode.Name, criticalityValue)
 			return nil
 		}),
 		DeleteFunc: controllerutil.CreateDeleteNodeHandler(logger, func(node *v1.Node) error {
@@ -1078,7 +1083,9 @@ func (nc *Controller) podUpdated(oldPod, newPod *v1.Pod) {
 	}
 	if len(newPod.Spec.NodeName) != 0 && (oldPod == nil || newPod.Spec.NodeName != oldPod.Spec.NodeName) {
 		podItem := podUpdateItem{newPod.Namespace, newPod.Name}
-		nc.podUpdateQueue.Add(podItem)
+		//nc.podUpdateQueue.Add(podItem)
+		criticalityValue := controllerutil.GetPodCriticality(newPod)
+		nc.podUpdateQueue.Add(podItem, criticalityValue)
 	}
 }
 
