@@ -232,8 +232,8 @@ func (rsc *ReplicaSetController) Run(ctx context.Context, workers int) {
 	// TODO: Ulysses correct number of workers as input
 	//for i := 0; i < workers; i++ {
 	interval := time.NewTicker(20 * time.Millisecond)
-	// TODO: Ulysses improve parameteres
-		for i := 0; i < 3; i++ {
+	// TODO: Ulysses improve parameteres number of workers
+	for i := 0; i < 3; i++ {
 		go wait.UntilWithContext(ctx, rsc.worker, time.Second)
 		klog.Infof("Delaying start of worker %d", i)
 		<-interval.C
@@ -610,20 +610,48 @@ func (rsc *ReplicaSetController) deletePod(logger klog.Logger, obj interface{}) 
 // It enforces that the syncHandler is never invoked concurrently with the same key.
 func (rsc *ReplicaSetController) worker(ctx context.Context) {
 	// TODO: Ulysses improve timing tuning
-	//interval := time.NewTicker(450 * time.Millisecond)
-	//defer interval.Stop()
 	for rsc.processNextWorkItem(ctx) {
 		rsc.periodMan.WaitPeriod()
 	}
 }
 
+// Mode switch protocol
+// func (rsc *ReplicaSetController) worker(ctx context.Context) {
+// 	continue := rsc.processNextWorkItemDet(ctx)
+// 	for continue {
+// 		if rsc.deterministic{
+// 			processNextWorkItemDet(ctx)
+// 			rsc.periodMan.WaitPeriod()
+// 		} else {
+// 			processNextWorkItem(ctx)
+// 		}	
+// 	}
+// }
+// func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
+// 	key, shutdown := rsc.queue.Get()
+// 	if shutdown {
+// 		return false
+// 	}
+// 	defer rsc.queue.Done(key)
+// 	err := rsc.syncHandler(ctx, key.(string))
+// 	if err == nil {
+// 		rsc.queue.Forget(key)
+// 		return true
+// 	}
+// 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
+// 	rsc.queue.AddRateLimited(key)
+// 	return true
+// }
+
+
 func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
-	//klog.Infof("processNextWorkItem1 - GREPTAG Waiting for replicaset")
+	logger := klog.FromContext(ctx)
+	logger.V(2).Info("processNextWorkItem1 - GREPTAG Waiting for replicaset")
 	key, code := rsc.queue.GetDeterministic()
 
 	for code != 0 {
 		if code == 2 {
-			//klog.Infof("process - GREPTAG empty")
+			logger.V(2).Info("process - GREPTAG empty")
 			return true
 		}
 
@@ -633,7 +661,7 @@ func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
 
 		retrials := 0
 		for code == 3 {
-			//klog.Infof("process - GREPTAG invalid")
+			//logger.V(2).Info("process - GREPTAG invalid")
 			retrials += 1
 			if retrials > 2 {
 				return true
@@ -643,7 +671,7 @@ func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
 		}
 	}
 
-	//klog.Infof("processNextWorkItem1 - GREPTAG Got replicaset %s", key)
+	logger.V(2).Info("processNextWorkItem1 - GREPTAG Got replicaset %s", key)
 
 	defer rsc.queue.Done(key)
 
@@ -654,7 +682,7 @@ func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
 	}
 
 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
-	//klog.Infof("processNextWorkItem - GREPTAG error add with limit ")
+	logger.V(2).Info("processNextWorkItem - GREPTAG error add with limit ")
 	rsc.queue.AddRateLimited(key)
 
 	return true

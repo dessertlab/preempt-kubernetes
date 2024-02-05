@@ -377,7 +377,7 @@ func (q *Type) GetDeterministic() (item interface{}, code int8) {
 				break
 			} else {
 				return nil, 3
-				//TODO: handle remotion of never-validated items after retrials
+				// TODO: Ulysses handle remotion of never-validated items after retrials
 				// add another function?
 			}
 		}
