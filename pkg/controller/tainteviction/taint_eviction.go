@@ -47,7 +47,7 @@ import (
 	controllerutil "k8s.io/kubernetes/pkg/controller/util/node"
 	"k8s.io/kubernetes/pkg/features"
 	utilpod "k8s.io/kubernetes/pkg/util/pod"
-	replicaset "k8s.io/kubernetes/pkg/controller/replicaset"
+	//replicaset "k8s.io/kubernetes/pkg/controller/replicaset"
 )
 
 const (
@@ -121,7 +121,7 @@ func deletePodHandler(c clientset.Interface, emitEventFunc func(types.Namespaced
 		var err error
 		for i := 0; i < retries; i++ {
 			// TODO: ulysses check changes, check klog.FromContext(ctx)
-			replicaset.RSCPOINTER.DeletePod(klog.FromContext(ctx), args.Pod)
+			//replicaset.RSCPOINTER.DeletePod(klog.FromContext(ctx), args.Pod)
 			err = addConditionAndDeletePod(ctx, c, name, ns)
 			if err == nil {
 				metrics.PodDeletionsTotal.Inc()
@@ -324,16 +324,16 @@ func (tc *Controller) Run(ctx context.Context) {
 	go func(stopCh <-chan struct{}) {
 		//interval := time.NewTicker(150 * time.Millisecond)
 		for {
-			// item, shutdown := tc.nodeUpdateQueue.Get()
-			// if shutdown {
+			item, shutdown := tc.nodeUpdateQueue.Get()
+			if shutdown {
 			//<-interval.C
-			tc.periodMan.WaitPeriod()
-			item, code := tc.nodeUpdateQueue.GetDeterministic()
+			//tc.periodMan.WaitPeriod()
+			// item, code := tc.nodeUpdateQueue.GetDeterministic()
 
-			if code == 2 || code == 3 {
-				continue
-			}
-			if code == 1 {
+			// if code == 2 || code == 3 {
+			// 	continue
+			// }
+			// if code == 1 {
 					break
 			}
 			//klog.Infof("Taint manager Got %s!", item)
@@ -353,18 +353,18 @@ func (tc *Controller) Run(ctx context.Context) {
 	go func(stopCh <-chan struct{}) {
 		//interval := time.NewTicker(150 * time.Millisecond)
 		for {
-			//item, shutdown := tc.podUpdateQueue.Get()
-			//if shutdown {
+			item, shutdown := tc.podUpdateQueue.Get()
+			if shutdown {
 			//<-interval.C
-			tc.periodMan.WaitPeriod()
-			item, code := tc.podUpdateQueue.GetDeterministic()
+			//tc.periodMan.WaitPeriod()
+			// item, code := tc.podUpdateQueue.GetDeterministic()
 
-			if code == 2 {
-				continue
-			}
+			// if code == 2 {
+			// 	continue
+			// }
 
-			if code == 1 {
-				break
+			// if code == 1 {
+			 	break
 			}
 			// The fact that pods are processed by the same worker as nodes is used to avoid races
 			// between node worker setting tc.taintedNodes and pod worker reading this to decide

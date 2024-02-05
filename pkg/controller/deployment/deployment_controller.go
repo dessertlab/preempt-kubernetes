@@ -499,18 +499,10 @@ func (dc *DeploymentController) worker(ctx context.Context) {
 }
 
 func (dc *DeploymentController) processNextWorkItem(ctx context.Context) bool {
-	//key, quit := dc.queue.Get()
-	//if quit {
-	key, code := dc.queue.GetDeterministic()
-
-	if code == 2 || code == 3 {
-		return true
-	}
-
-	if code == 1 {
+	key, quit := dc.queue.Get()
+	if quit {
 		return false
 	}
-	//}
 	defer dc.queue.Done(key)
 
 	err := dc.syncHandler(ctx, key.(string))
@@ -518,6 +510,28 @@ func (dc *DeploymentController) processNextWorkItem(ctx context.Context) bool {
 
 	return true
 }
+
+// func (dc *DeploymentController) processNextWorkItem(ctx context.Context) bool {
+// 	//key, quit := dc.queue.Get()
+// 	//if quit {
+// 	key, code := dc.queue.GetDeterministic()
+
+// 	if code == 2 || code == 3 {
+// 		return true
+// 	}
+
+// 	if code == 1 {
+// 		return false
+// 	}
+// 	//}
+// 	defer dc.queue.Done(key)
+
+// 	err := dc.syncHandler(ctx, key.(string))
+// 	dc.handleErr(ctx, err, key)
+
+// 	return true
+// }
+
 
 func (dc *DeploymentController) handleErr(ctx context.Context, err error, key interface{}) {
 	logger := klog.FromContext(ctx)

@@ -611,7 +611,7 @@ func (rsc *ReplicaSetController) deletePod(logger klog.Logger, obj interface{}) 
 func (rsc *ReplicaSetController) worker(ctx context.Context) {
 	// TODO: Ulysses improve timing tuning
 	for rsc.processNextWorkItem(ctx) {
-		rsc.periodMan.WaitPeriod()
+		//rsc.periodMan.WaitPeriod()
 	}
 }
 
@@ -627,66 +627,66 @@ func (rsc *ReplicaSetController) worker(ctx context.Context) {
 // 		}	
 // 	}
 // }
-// func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
-// 	key, shutdown := rsc.queue.Get()
-// 	if shutdown {
-// 		return false
-// 	}
-// 	defer rsc.queue.Done(key)
-// 	err := rsc.syncHandler(ctx, key.(string))
-// 	if err == nil {
-// 		rsc.queue.Forget(key)
-// 		return true
-// 	}
-// 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
-// 	rsc.queue.AddRateLimited(key)
-// 	return true
-// }
-
-
 func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
-	logger := klog.FromContext(ctx)
-	logger.V(2).Info("processNextWorkItem1 - GREPTAG Waiting for replicaset")
-	key, code := rsc.queue.GetDeterministic()
-
-	for code != 0 {
-		if code == 2 {
-			logger.V(2).Info("process - GREPTAG empty")
-			return true
-		}
-
-		if code == 1 {
-			return false
-		}
-
-		retrials := 0
-		for code == 3 {
-			//logger.V(2).Info("process - GREPTAG invalid")
-			retrials += 1
-			if retrials > 2 {
-				return true
-			}
-			time.Sleep(10 * time.Millisecond)
-			key, code = rsc.queue.GetDeterministic()
-		}
+	key, shutdown := rsc.queue.Get()
+	if shutdown {
+		return false
 	}
-
-	logger.V(2).Info("processNextWorkItem1 - GREPTAG Got replicaset %s", key)
-
 	defer rsc.queue.Done(key)
-
 	err := rsc.syncHandler(ctx, key.(string))
 	if err == nil {
 		rsc.queue.Forget(key)
 		return true
 	}
-
 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
-	logger.V(2).Info("processNextWorkItem - GREPTAG error add with limit ")
 	rsc.queue.AddRateLimited(key)
-
 	return true
 }
+
+
+// func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
+// 	logger := klog.FromContext(ctx)
+// 	logger.V(2).Info("processNextWorkItem1 - GREPTAG Waiting for replicaset")
+// 	key, code := rsc.queue.GetDeterministic()
+
+// 	for code != 0 {
+// 		if code == 2 {
+// 			logger.V(2).Info("process - GREPTAG empty")
+// 			return true
+// 		}
+
+// 		if code == 1 {
+// 			return false
+// 		}
+
+// 		retrials := 0
+// 		for code == 3 {
+// 			//logger.V(2).Info("process - GREPTAG invalid")
+// 			retrials += 1
+// 			if retrials > 2 {
+// 				return true
+// 			}
+// 			time.Sleep(10 * time.Millisecond)
+// 			key, code = rsc.queue.GetDeterministic()
+// 		}
+// 	}
+
+// 	logger.V(2).Info("processNextWorkItem1 - GREPTAG Got replicaset %s", key)
+
+// 	defer rsc.queue.Done(key)
+
+// 	err := rsc.syncHandler(ctx, key.(string))
+// 	if err == nil {
+// 		rsc.queue.Forget(key)
+// 		return true
+// 	}
+
+// 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
+// 	logger.V(2).Info("processNextWorkItem - GREPTAG error add with limit ")
+// 	rsc.queue.AddRateLimited(key)
+
+// 	return true
+// }
 
 // manageReplicas checks and updates replicas for the given ReplicaSet.
 // Does NOT modify <filteredPods>.
