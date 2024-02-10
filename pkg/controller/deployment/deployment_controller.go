@@ -181,7 +181,10 @@ func (dc *DeploymentController) Run(ctx context.Context, workers int) {
 	dc.periodMan = controllerutil.NewPeriodManager(uint32(workers * 120),1000, uint32(workers))
 
 	interval := time.NewTicker(20 * time.Millisecond)
-	for i := 0; i < workers; i++ {
+	// Start workers reserved for critical
+	go wait.UntilWithContext(ctx, dc.workerAsSoonAsPossible, time.Second)
+	// Start all the others
+	for i := 0; i < workers-1; i++ {
 		go wait.UntilWithContext(ctx, dc.worker, time.Second)
 		klog.Infof("Delaying start of worker %d", i)
 		<-interval.C
@@ -488,18 +491,31 @@ func (dc *DeploymentController) resolveControllerRef(namespace string, controlle
 // worker runs a worker thread that just dequeues items, processes them, and marks them done.
 // It enforces that the syncHandler is never invoked concurrently with the same key.
 func (dc *DeploymentController) worker(ctx context.Context) {
-	// interval := time.NewTicker(20 * time.Millisecond)
-	// for dc.processNextWorkItem(ctx) {
-	// 	<-interval.C
-	// }
 	for dc.processNextWorkItem(ctx) {
 		dc.periodMan.WaitPeriod()
 	}
 }
 
+func (dc *DeploymentController) workerAsSoonAsPossible(ctx context.Context) {
+	for dc.processNextWorkItemAsSoonAsPossible(ctx) {
+	}
+}
+
+func (dc *DeploymentController) processNextWorkItemAsSoonAsPossible(ctx context.Context) bool {
+	key, shutdown := dc.queue.GetCritical()
+	if shutdown {
+		return false
+	}
+	defer dc.queue.Done(key)
+
+	err := dc.syncHandler(ctx, key.(string))
+	dc.handleErr(ctx, err, key)
+
+	return true
+}
+
+
 func (dc *DeploymentController) processNextWorkItem(ctx context.Context) bool {
-	//key, quit := dc.queue.Get()
-	//if quit {
 	key, code := dc.queue.GetDeterministic()
 
 	if code == 2 || code == 3 {
@@ -509,7 +525,6 @@ func (dc *DeploymentController) processNextWorkItem(ctx context.Context) bool {
 	if code == 1 {
 		return false
 	}
-	//}
 	defer dc.queue.Done(key)
 
 	err := dc.syncHandler(ctx, key.(string))

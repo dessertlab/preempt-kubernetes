@@ -30,6 +30,7 @@ type Interface interface {
 	Len() int
 	Get() (item interface{}, shutdown bool)
 	GetDeterministic() (item interface{}, code int8)
+	GetCritical() (item interface{}, shutdown bool)
 	Done(item interface{}, priority ...int)
 	ShutDown()
 	ShutDownWithDrain()
@@ -343,6 +344,56 @@ func (q *Type) Get() (item interface{}, shutdown bool) {
 
 	return item, false
 }
+
+
+// GetCritical blocks until it can return an item to be processed of non-zero criticality level.
+// If shutdown = true, the caller should end their goroutine.
+// You must call Done with item when you have finished processing it.
+// It assumes the element is valid, and returns the highest prio elem.
+func (q *Type) GetCritical() (item interface{}, shutdown bool) {
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
+	for q.isempty && !q.shuttingDown {
+		q.cond.Wait()
+	}
+	if q.isempty {
+		return nil, true
+	}
+
+	var i int8
+	for i = CRITICALITIES - 1; i >= 1; i-- {
+		if len(q.queue[i]) != 0 {
+			item = q.queue[i][0]
+			// The underlying array still exists and reference this object,
+			// so the object will not be garbage collected.
+			q.queue[i][0] = nil
+			q.queue[i] = q.queue[i][1:]
+			q.valid[i] = q.valid[i][1:]
+			//klog.Infof("%s Item found at prio %d", q.name, i)
+			break
+		}
+	}
+
+	//TODO: Ulysses improve this part
+	length := 0
+	for i >= 0 {
+		length += len(q.queue[i])
+		i--
+	}
+
+	if length == 0 {
+		q.isempty = true
+	}
+	
+
+	q.metrics.get(item)
+
+	q.processing.insert(item)
+	q.dirty.delete(item)
+
+	return item, false
+}
+
 
 // GetDeterministic is non blocking, returns special codes for aborted exec
 // If shutdown = true, the caller should end their goroutine.

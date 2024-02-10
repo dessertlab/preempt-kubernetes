@@ -235,7 +235,10 @@ func (rsc *ReplicaSetController) Run(ctx context.Context, workers int) {
 
 	interval := time.NewTicker(20 * time.Millisecond)
 	// TODO: Ulysses improve parameteres number of workers
-	for i := 0; i < workers; i++ {
+	// Start workers critical reserved
+	go wait.UntilWithContext(ctx, rsc.workerAsSoonAsPossible, time.Second)
+	// Start periodic workers
+	for i := 0; i < workers-1; i++ {
 		go wait.UntilWithContext(ctx, rsc.worker, time.Second)
 		klog.Infof("Delaying start of worker %d", i)
 		<-interval.C
@@ -629,21 +632,28 @@ func (rsc *ReplicaSetController) worker(ctx context.Context) {
 // 		}	
 // 	}
 // }
-// func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
-// 	key, shutdown := rsc.queue.Get()
-// 	if shutdown {
-// 		return false
-// 	}
-// 	defer rsc.queue.Done(key)
-// 	err := rsc.syncHandler(ctx, key.(string))
-// 	if err == nil {
-// 		rsc.queue.Forget(key)
-// 		return true
-// 	}
-// 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
-// 	rsc.queue.AddRateLimited(key)
-// 	return true
-// }
+
+// Worker reserved to critical items
+func (rsc *ReplicaSetController) workerAsSoonAsPossible(ctx context.Context) {
+	for rsc.processNextWorkItemAsSoonAsPossible(ctx) {	
+	}
+}
+
+func (rsc *ReplicaSetController) processNextWorkItemAsSoonAsPossible(ctx context.Context) bool {
+	key, shutdown := rsc.queue.GetCritical()
+	if shutdown {
+		return false
+	}
+	defer rsc.queue.Done(key)
+	err := rsc.syncHandler(ctx, key.(string))
+	if err == nil {
+		rsc.queue.Forget(key)
+		return true
+	}
+	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
+	rsc.queue.AddRateLimited(key)
+	return true
+}
 
 
 func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
