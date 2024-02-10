@@ -178,11 +178,8 @@ func (dc *DeploymentController) Run(ctx context.Context, workers int) {
 		return
 	}
 
-	// for i := 0; i < workers; i++ {
-	// 	go wait.UntilWithContext(ctx, dc.worker, time.Second)
-	// }
 	interval := time.NewTicker(20 * time.Millisecond)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < workers; i++ {
 		go wait.UntilWithContext(ctx, dc.worker, time.Second)
 		klog.Infof("Delaying start of worker %d", i)
 		<-interval.C

@@ -274,4 +274,15 @@ func SetDefaults_KubeletConfiguration(obj *kubeletconfigv1beta1.KubeletConfigura
 	if obj.ContainerRuntimeEndpoint == "" {
 		obj.ContainerRuntimeEndpoint = "unix:///run/containerd/containerd.sock"
 	}
+
+	// Ulysses default parameters
+	if obj.ReservedPodOpeningTime == zeroDuration {
+		obj.ReservedPodOpeningTime = metav1.Duration{Duration: 500 * time.Millisecond}
+	}
+	if obj.ReservedPodOpeningTimeReset == zeroDuration {
+		obj.ReservedPodOpeningTimeReset = metav1.Duration{Duration: 5 * time.Second}
+	}
+	if obj.ReservedPodOpeningTimeRescale == 0 {
+		obj.ReservedPodOpeningTimeRescale = 2.0
+	}
 }

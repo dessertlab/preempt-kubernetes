@@ -519,6 +519,9 @@ func autoConvert_v1beta1_KubeletConfiguration_To_config_KubeletConfiguration(in 
 	}
 	out.ContainerRuntimeEndpoint = in.ContainerRuntimeEndpoint
 	out.ImageServiceEndpoint = in.ImageServiceEndpoint
+	out.ReservedPodOpeningTime = in.ReservedPodOpeningTime
+	out.ReservedPodOpeningTimeRescale = in.ReservedPodOpeningTimeRescale
+	out.ReservedPodOpeningTimeReset = in.ReservedPodOpeningTimeReset
 	return nil
 }
 

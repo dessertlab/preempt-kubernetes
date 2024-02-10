@@ -830,6 +830,20 @@ type KubeletConfiguration struct {
 	// If not specified, the value in containerRuntimeEndpoint is used.
 	// +optional
 	ImageServiceEndpoint string `json:"imageServiceEndpoint,omitempty"`
+	
+	// Timing parameters of the Kubelet Ulysses
+	// This field cannot be a negative number.
+	// Default: 500ms
+	// +optional
+	ReservedPodOpeningTime metav1.Duration `json:"reservedPodOpeningTime,omitempty"`
+	// This field cannot be a negative number.
+	// Default: 5s
+	// +optional
+	ReservedPodOpeningTimeReset metav1.Duration `json:"reservedPodOpeningTimeReset,omitempty"`
+	// This field cannot be a negative number.
+	// Default: 
+	// +optional
+	ReservedPodOpeningTimeRescale float32 `json:"reservedPodOpeningTimeRescale,omitempty"`
 }
 
 type KubeletAuthorizationMode string

@@ -213,6 +213,7 @@ var (
 	etcHostsPath     = getContainerEtcHostsPath()
 )
 
+
 func getContainerEtcHostsPath() string {
 	if sysruntime.GOOS == "windows" {
 		return windowsEtcHostsPath
@@ -564,6 +565,9 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 		nodeStatusMaxImages:            nodeStatusMaxImages,
 		tracer:                         tracer,
 		nodeStartupLatencyTracker:      kubeDeps.NodeStartupLatencyTracker,
+		ReservedPodOpeningTime: 		kubeCfg.ReservedPodOpeningTime,
+		ReservedPodOpeningTimeReset:	kubeCfg.ReservedPodOpeningTimeReset,
+		ReservedPodOpeningTimeRescale:	kubeCfg.ReservedPodOpeningTimeRescale,
 	}
 
 	if klet.cloud != nil {
@@ -1326,6 +1330,11 @@ type Kubelet struct {
 
 	// Track node startup latencies
 	nodeStartupLatencyTracker util.NodeStartupLatencyTracker
+
+	// Ulysses parameters
+	ReservedPodOpeningTime metav1.Duration
+	ReservedPodOpeningTimeReset metav1.Duration
+	ReservedPodOpeningTimeRescale float32
 }
 
 // ListPodStats is delegated to StatsProvider, which implements stats.Provider interface
@@ -2354,7 +2363,7 @@ func (kl *Kubelet) syncLoop(ctx context.Context, updates <-chan kubetypes.PodUpd
 	addChanlow := make(chan kubetypes.PodUpdate)
 	//queue := workqueue.NewNamed("add_pod_queue")
 
-	go addHandlerPeriodic(addChanlow, addChan, handler)
+	go addHandlerPeriodic(addChanlow, addChan, handler, kl)
 
 	for {
 		if err := kl.runtimeState.runtimeErrors(); err != nil {
@@ -2376,10 +2385,6 @@ func (kl *Kubelet) syncLoop(ctx context.Context, updates <-chan kubetypes.PodUpd
 }
 
 func handleevent(u kubetypes.PodUpdate, handler SyncHandler) {
-	//if !open {
-	// 	klog.ErrorS(nil, "Update channel is closed, exiting the sync loop")
-	// 	return
-	// }
 	switch u.Op {
 	case kubetypes.ADD:
 		klog.V(2).InfoS("SyncLoop ADD Delayed", "source", u.Source, "pods", klog.KObjs(u.Pods))
@@ -2391,36 +2396,37 @@ func handleevent(u kubetypes.PodUpdate, handler SyncHandler) {
 	}
 }
 
-func addHandlerPeriodic(lowprio, hiprio <-chan kubetypes.PodUpdate, handler SyncHandler) {
-	timeToSleep := 600.0
+func addHandlerPeriodic(lowprio, hiprio <-chan kubetypes.PodUpdate, handler SyncHandler, kl *Kubelet) {
+	timeToSleep := kl.ReservedPodOpeningTime
 	now := time.Now().Unix()
 	oldnow := time.Now().Unix()
+	//now := metav1.Now()
+	//oldnow := metav1.Now()
 	for {
 		oldnow = now
 		select {
 		case u := <-hiprio:
-			now = time.Now().Unix()
+			now = time.Now().Unix() //now = metav1.Now() //
 			//klog.InfoS("Got Item hiprio, pods:", klog.KObjs(u.Pods))
 			handleevent(u, handler)
 		default:
 			select {
 			case u := <-hiprio:
-				now = time.Now().Unix()
+				now = time.Now().Unix()	 //now = metav1.Now() //
 				//klog.InfoS("Got Item hiprio, pods:", klog.KObjs(u.Pods))
 				handleevent(u, handler)
 			case u := <-lowprio:
-				now = time.Now().Unix()
+				now = time.Now().Unix()  //now = metav1.Now()
 				//klog.InfoS("Got Item low, pods:", klog.KObjs(u.Pods))
 				handleevent(u, handler)
 			}
 		}
-		if (now - oldnow) > 5 {
-			timeToSleep = 600.0
+		if (now - oldnow) > kl.ReservedPodOpeningTimeReset.Duration.Milliseconds() {
+			timeToSleep = kl.ReservedPodOpeningTime
 		}
 		klog.InfoS("Sleeping for ", timeToSleep)
-		time.Sleep(time.Duration(timeToSleep) * time.Millisecond)
-		timeToSleep = timeToSleep / float64(2)
-		//timeToSleep = timeToSleep * float64(1.2)
+		time.Sleep(timeToSleep.Duration) //time.Duration(timeToSleep) * time.Millisecond)
+		timeToSleep =  metav1.Duration{Duration:  time.Duration(float64(timeToSleep.Duration) / float64(kl.ReservedPodOpeningTimeRescale))} 
 	}
 }
 	 
@@ -2472,7 +2478,7 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan kubety
 		case kubetypes.ADD:
 			klog.V(2).InfoS("SyncLoop ADD", "source", u.Source, "pods", klog.KObjSlice(u.Pods))
 
-			// multi-priority kubelet
+			// Ulysses: multi-priority kubelet
 			criticalityValue := 0
 			for _, pod := range u.Pods {
 				if controllerutil.GetPodCriticality(pod) > criticalityValue {

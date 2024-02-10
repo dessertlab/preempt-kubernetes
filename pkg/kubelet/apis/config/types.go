@@ -484,6 +484,14 @@ type KubeletConfiguration struct {
 	// If not specified the default value is ContainerRuntimeEndpoint
 	// +optional
 	ImageServiceEndpoint string
+
+	// Timing parameters of the Kubelet  
+	// +optional
+	ReservedPodOpeningTime metav1.Duration
+	// +optional
+	ReservedPodOpeningTimeReset metav1.Duration
+	// +optional
+	ReservedPodOpeningTimeRescale float32
 }
 
 // KubeletAuthorizationMode denotes the authorization mode for the kubelet

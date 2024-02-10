@@ -229,11 +229,9 @@ func (rsc *ReplicaSetController) Run(ctx context.Context, workers int) {
 		return
 	}
 
-	// TODO: Ulysses correct number of workers as input
-	//for i := 0; i < workers; i++ {
 	interval := time.NewTicker(20 * time.Millisecond)
 	// TODO: Ulysses improve parameteres number of workers
-	for i := 0; i < 3; i++ {
+	for i := 0; i < workers; i++ {
 		go wait.UntilWithContext(ctx, rsc.worker, time.Second)
 		klog.Infof("Delaying start of worker %d", i)
 		<-interval.C

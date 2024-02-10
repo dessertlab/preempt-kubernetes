@@ -140,6 +140,16 @@ func ValidateKubeletConfiguration(kc *kubeletconfig.KubeletConfiguration, featur
 	if kc.ServerTLSBootstrap && !localFeatureGate.Enabled(features.RotateKubeletServerCertificate) {
 		allErrors = append(allErrors, fmt.Errorf("invalid configuration: serverTLSBootstrap %v requires feature gate RotateKubeletServerCertificate", kc.ServerTLSBootstrap))
 	}
+	// if kc.ReservedPodOpeningTime < 0 {
+	// 	allErrors = append(allErrors, fmt.Errorf("invalid configuration: reservedPodOpeningTime (--reserved-pod-opening-time) %v must not be a negative number", kc.ReservedPodOpeningTime))
+	// }
+	// if kc.ReservedPodOpeningTimeReset < 0 {
+	// 	allErrors = append(allErrors, fmt.Errorf("invalid configuration: reservedPodOpeningTimeReset (--reserved-pod-opening-time-reset) %v must not be a negative number", kc.ReservedPodOpeningTimeReset))
+	// }
+	if kc.ReservedPodOpeningTimeRescale < 0 {
+		allErrors = append(allErrors, fmt.Errorf("invalid configuration: ReservedPodOpeningTimeRescale (--reserved-pod-opening-time-rescale) %v must not be a negative number", kc.ReservedPodOpeningTimeRescale))
+	}
+
 
 	for _, nodeTaint := range kc.RegisterWithTaints {
 		if err := utiltaints.CheckTaintValidation(nodeTaint); err != nil {
