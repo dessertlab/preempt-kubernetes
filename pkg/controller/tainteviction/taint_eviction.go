@@ -322,20 +322,20 @@ func (tc *Controller) Run(ctx context.Context) {
 	// Functions that are responsible for taking work items out of the workqueues and putting them
 	// into channels.
 	go func(stopCh <-chan struct{}) {
-		//interval := time.NewTicker(150 * time.Millisecond)
 		for {
-			// item, shutdown := tc.nodeUpdateQueue.Get()
-			// if shutdown {
-			//<-interval.C
-			tc.periodMan.WaitPeriod()
-			item, code := tc.nodeUpdateQueue.GetDeterministic()
+			item, shutdown := tc.nodeUpdateQueue.Get()
+			if shutdown {
+				break
+			}
+			// tc.periodMan.WaitPeriod()
+			// item, code := tc.nodeUpdateQueue.GetDeterministic()
 
-			if code == 2 || code == 3 {
-				continue
-			}
-			if code == 1 {
-					break
-			}
+			// if code == 2 || code == 3 {
+			// 	continue
+			// }
+			// if code == 1 {
+			// 		break
+			// }
 			//klog.Infof("Taint manager Got %s!", item)
 
 			nodeUpdate := item.(nodeUpdateItem)
@@ -351,21 +351,21 @@ func (tc *Controller) Run(ctx context.Context) {
 	}(ctx.Done())
 
 	go func(stopCh <-chan struct{}) {
-		//interval := time.NewTicker(150 * time.Millisecond)
 		for {
-			//item, shutdown := tc.podUpdateQueue.Get()
-			//if shutdown {
-			//<-interval.C
-			tc.periodMan.WaitPeriod()
-			item, code := tc.podUpdateQueue.GetDeterministic()
-
-			if code == 2 {
-				continue
-			}
-
-			if code == 1 {
+			item, shutdown := tc.podUpdateQueue.Get()
+			if shutdown {
 				break
 			}
+			// tc.periodMan.WaitPeriod()
+			// item, code := tc.podUpdateQueue.GetDeterministic()
+
+			// if code == 2 {
+			// 	continue
+			// }
+
+			// if code == 1 {
+			// 	break
+			// }
 			// The fact that pods are processed by the same worker as nodes is used to avoid races
 			// between node worker setting tc.taintedNodes and pod worker reading this to decide
 			// whether to delete pod.

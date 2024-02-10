@@ -138,6 +138,7 @@ func NewReplicaSetController(logger klog.Logger, rsInformer appsinformers.Replic
 			Recorder:   eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "replicaset-controller"}),
 		},
 		eventBroadcaster,
+		// TODO: Ulysses delete useless new object if possible
 		controllerutil.NewPeriodManager(200,450,3),
 	)
 	return RSCPOINTER
@@ -229,11 +230,12 @@ func (rsc *ReplicaSetController) Run(ctx context.Context, workers int) {
 		return
 	}
 
-	// TODO: Ulysses correct number of workers as input
-	//for i := 0; i < workers; i++ {
+	// TODO: Ulysses improve parameteres periods
+	rsc.periodMan = controllerutil.NewPeriodManager(uint32(120*workers),1000,uint32(workers))
+
 	interval := time.NewTicker(20 * time.Millisecond)
 	// TODO: Ulysses improve parameteres number of workers
-	for i := 0; i < 3; i++ {
+	for i := 0; i < workers; i++ {
 		go wait.UntilWithContext(ctx, rsc.worker, time.Second)
 		klog.Infof("Delaying start of worker %d", i)
 		<-interval.C
