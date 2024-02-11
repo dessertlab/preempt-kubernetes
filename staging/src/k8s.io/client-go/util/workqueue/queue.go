@@ -353,10 +353,11 @@ func (q *Type) Get() (item interface{}, shutdown bool) {
 func (q *Type) GetCritical() (item interface{}, shutdown bool) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
-	for q.isempty && !q.shuttingDown {
+	// TODO: Ulysses improve condition here
+	for !q.shuttingDown && len(q.queue[2]) == 0 && len(q.queue[1]) == 0 {
 		q.cond.Wait()
 	}
-	if q.isempty {
+	if len(q.queue[2]) == 0 && len(q.queue[1]) == 0 {
 		return nil, true
 	}
 
