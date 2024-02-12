@@ -2400,8 +2400,6 @@ func addHandlerPeriodic(lowprio, hiprio <-chan kubetypes.PodUpdate, handler Sync
 	timeToSleep := kl.ReservedPodOpeningTime
 	now := time.Now().Unix()
 	oldnow := time.Now().Unix()
-	//now := metav1.Now()
-	//oldnow := metav1.Now()
 	for {
 		oldnow = now
 		select {
@@ -2421,7 +2419,7 @@ func addHandlerPeriodic(lowprio, hiprio <-chan kubetypes.PodUpdate, handler Sync
 				handleevent(u, handler)
 			}
 		}
-		if (now - oldnow) > kl.ReservedPodOpeningTimeReset.Duration.Milliseconds() {
+		if (now - oldnow) > int64(kl.ReservedPodOpeningTimeReset.Duration.Seconds()) {
 			timeToSleep = kl.ReservedPodOpeningTime
 		}
 		klog.InfoS("Sleeping for ", timeToSleep)
@@ -2463,6 +2461,7 @@ func addHandlerPeriodic(lowprio, hiprio <-chan kubetypes.PodUpdate, handler Sync
 //   - housekeepingCh: trigger cleanup of pods
 //   - health manager: sync pods that have failed or in which one or more
 //     containers have failed health checks
+func WrapSend(u kubetypes.PodUpdate, addchanlow chan kubetypes.PodUpdate) {addchanlow <- u}
 func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan kubetypes.PodUpdate, handler SyncHandler,
 	syncCh <-chan time.Time, housekeepingCh <-chan time.Time, plegCh <-chan *pleg.PodLifecycleEvent,  addchan, addchanlow chan kubetypes.PodUpdate) bool {
 	select {
@@ -2495,9 +2494,10 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan kubety
 			// admission process and *may* be rejected. This can be resolved
 			// once we have checkpointing.
 			if criticalityValue > 0 {
-				addchan <- u
+				//addchan <- u
+				handler.HandlePodAdditions(u.Pods)
 			} else {
-				addchanlow <- u
+				go WrapSend(u,addchanlow) // {addchanlow <- u}
 			}
 
 		case kubetypes.UPDATE:
