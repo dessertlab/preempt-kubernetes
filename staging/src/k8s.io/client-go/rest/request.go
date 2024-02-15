@@ -981,6 +981,7 @@ func (r *Request) request(ctx context.Context, fn func(*http.Request, *http.Resp
 	client := r.c.Client
 	if client == nil {
 		client = http.DefaultClient
+		klog.V(4).Infof("Defaulting GREPTAG Client for Req %v %v", r.resourceName, r.verb)
 	}
 
 	// Throttle the first try before setting up the timeout configured on the

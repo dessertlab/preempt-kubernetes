@@ -48,6 +48,7 @@ import (
 	"k8s.io/kubernetes/pkg/controller"
 	endpointslicepkg "k8s.io/kubernetes/pkg/controller/util/endpointslice"
 	"k8s.io/kubernetes/pkg/features"
+	controllerutil "k8s.io/kubernetes/pkg/controller/util/node"
 )
 
 const (
@@ -177,6 +178,9 @@ func NewController(ctx context.Context, podInformer coreinformers.PodInformer,
 		controllerName,
 	)
 
+	// TODO: Ulysses delete useless new object if possible
+	c.periodMan = controllerutil.NewPeriodManager(200,450,3)
+
 	return c
 }
 
@@ -247,6 +251,9 @@ type Controller struct {
 	// topologyCache tracks the distribution of Nodes and endpoints across zones
 	// to enable TopologyAwareHints.
 	topologyCache *topologycache.TopologyCache
+
+	// Period Manager that controls the waking time of workers
+	periodMan *controllerutil.PeriodManager
 }
 
 // Run will not return until stopCh is closed.
@@ -269,9 +276,21 @@ func (c *Controller) Run(ctx context.Context, workers int) {
 	}
 
 	logger.V(2).Info("Starting worker threads", "total", workers)
-	for i := 0; i < workers; i++ {
+
+	// TODO: Ulysses improve parameteres periods
+	c.periodMan = controllerutil.NewPeriodManager(uint32(150*workers),1000,uint32(workers))	//100
+
+	interval := time.NewTicker(20 * time.Millisecond)
+	// TODO: Ulysses improve parameteres number of workers
+	// Start workers critical reserved
+	go wait.Until(func() { c.workerAsSoonAsPossible(logger) }, c.workerLoopPeriod, ctx.Done())
+	// Start periodic workers
+	for i := 0; i < workers-1; i++ {
 		go wait.Until(func() { c.worker(logger) }, c.workerLoopPeriod, ctx.Done())
+		klog.Infof("Delaying start of worker %d", i)
+		<-interval.C
 	}
+	go c.periodMan.Dispatch()
 
 	<-ctx.Done()
 }
@@ -280,16 +299,23 @@ func (c *Controller) Run(ctx context.Context, workers int) {
 // marks them done. You may run as many of these in parallel as you wish; the
 // workqueue guarantees that they will not end up processing the same service
 // at the same time
-func (c *Controller) worker(logger klog.Logger) {
-	for c.processNextWorkItem(logger) {
+func (c *Controller) workerAsSoonAsPossible(logger klog.Logger) {
+	for c.processNextWorkItemAsSoonAsPossible(logger) {
 	}
 }
 
-func (c *Controller) processNextWorkItem(logger klog.Logger) bool {
-	cKey, quit := c.queue.Get()
+func (c *Controller) worker(logger klog.Logger) {
+	for c.processNextWorkItem(logger) {
+		c.periodMan.WaitPeriod()
+	}
+}
+
+func (c *Controller) processNextWorkItemAsSoonAsPossible(logger klog.Logger) bool {
+	cKey, quit := c.queue.GetCritical()
 	if quit {
 		return false
 	}
+	logger.Info("GREPTAG Got Critical EP Slice %v", cKey)
 	defer c.queue.Done(cKey)
 
 	err := c.syncService(logger, cKey.(string))
@@ -297,6 +323,23 @@ func (c *Controller) processNextWorkItem(logger klog.Logger) bool {
 
 	return true
 }
+
+func (c *Controller) processNextWorkItem(logger klog.Logger) bool {
+	cKey, code := c.queue.GetDeterministic()
+	if code == 2 || code == 3 {
+		return true
+	}
+	if code == 1 {
+		return false
+	}
+	defer c.queue.Done(cKey)
+	logger.Info("GREPTAG Got EP Slice %v", cKey)
+	err := c.syncService(logger, cKey.(string))
+	c.handleErr(logger, err, cKey)
+
+	return true
+}
+
 
 func (c *Controller) handleErr(logger klog.Logger, err error, key interface{}) {
 	trackSync(err)
@@ -504,15 +547,35 @@ func (c *Controller) addPod(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("Unable to get pod %s/%s's service memberships: %v", pod.Namespace, pod.Name, err))
 		return
 	}
-	for key := range services {
-		c.queue.AddAfter(key, c.endpointUpdatesBatchPeriod)
+	crit:=controllerutil.GetPodCriticality(pod)
+	if crit > 0 {
+		for key := range services {
+			fmt.Println("GREPTAG Added critical pod udpserv for endpointslicesync %s/%s", pod.Namespace, pod.Name)
+			c.queue.Add(key, crit)
+		}
+	} else {
+		for key := range services {
+			//TODO: Ulysses how to fix here?
+			c.queue.AddAfter(key, c.endpointUpdatesBatchPeriod)
+		}
 	}
 }
 
 func (c *Controller) updatePod(old, cur interface{}) {
 	services := endpointsliceutil.GetServicesToUpdateOnPodChange(c.serviceLister, old, cur)
-	for key := range services {
-		c.queue.AddAfter(key, c.endpointUpdatesBatchPeriod)
+	pod := cur.(*v1.Pod)
+	crit:=controllerutil.GetPodCriticality(pod)
+
+	if crit > 0 {
+		for key := range services {
+			fmt.Println("GREPTAG Updated critical pod udpserv for endpointslicesync  %s/%s", pod.Namespace, pod.Name)
+			c.queue.Add(key, crit)
+		}
+	} else {
+		for key := range services {
+			//TODO: Ulysses how to fix here?
+			c.queue.AddAfter(key, c.endpointUpdatesBatchPeriod)
+		}
 	}
 }
 

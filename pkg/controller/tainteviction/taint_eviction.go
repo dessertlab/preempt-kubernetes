@@ -47,7 +47,7 @@ import (
 	controllerutil "k8s.io/kubernetes/pkg/controller/util/node"
 	"k8s.io/kubernetes/pkg/features"
 	utilpod "k8s.io/kubernetes/pkg/util/pod"
-	replicaset "k8s.io/kubernetes/pkg/controller/replicaset"
+	//replicaset "k8s.io/kubernetes/pkg/controller/replicaset"
 )
 
 const (
@@ -121,7 +121,7 @@ func deletePodHandler(c clientset.Interface, emitEventFunc func(types.Namespaced
 		var err error
 		for i := 0; i < retries; i++ {
 			// TODO: ulysses check changes, check klog.FromContext(ctx)
-			replicaset.RSCPOINTER.DeletePod(klog.FromContext(ctx), args.Pod)
+			//replicaset.RSCPOINTER.DeletePod(klog.FromContext(ctx), args.Pod)
 			err = addConditionAndDeletePod(ctx, c, name, ns)
 			if err == nil {
 				metrics.PodDeletionsTotal.Inc()
@@ -229,7 +229,7 @@ func New(ctx context.Context, c clientset.Interface, podInformer corev1informers
 		nodeUpdateQueue: workqueue.NewWithConfig(workqueue.QueueConfig{Name: "noexec_taint_node"}),
 		podUpdateQueue:  workqueue.NewWithConfig(workqueue.QueueConfig{Name: "noexec_taint_pod"}),
 		//TODO: Ulysses improve parameters period
-		periodMan: controllerutil.NewPeriodManager(50,200,2),
+		periodMan: controllerutil.NewPeriodManager(300,1000,1),		//50
 	}
 	tm.taintEvictionQueue = CreateWorkerQueue(deletePodHandler(c, tm.emitPodDeletionEvent, tm.name))
 
@@ -323,19 +323,19 @@ func (tc *Controller) Run(ctx context.Context) {
 	// into channels.
 	go func(stopCh <-chan struct{}) {
 		for {
-			item, shutdown := tc.nodeUpdateQueue.Get()
-			if shutdown {
+			// item, shutdown := tc.nodeUpdateQueue.Get()
+			// if shutdown {
+			// 	break
+			// }
+			tc.periodMan.WaitPeriod()
+			item, code := tc.nodeUpdateQueue.GetDeterministic()
+
+			if code == 2 || code == 3 {
+				continue
+			}
+			if code == 1 {
 				break
 			}
-			// tc.periodMan.WaitPeriod()
-			// item, code := tc.nodeUpdateQueue.GetDeterministic()
-
-			// if code == 2 || code == 3 {
-			// 	continue
-			// }
-			// if code == 1 {
-			// 		break
-			// }
 			//klog.Infof("Taint manager Got %s!", item)
 
 			nodeUpdate := item.(nodeUpdateItem)
@@ -642,12 +642,14 @@ func (tc *Controller) handleNodeUpdate(ctx context.Context, nodeUpdate nodeUpdat
 	now := time.Now()
 	// TODO: Ulysses improve parametrization
 	maxprio := 2
+	counterDelay := 0
     for i := 0; i < (maxprio + 1); i++ {
 		for _, pod := range pods {
 			if controllerutil.GetPodCriticality(pod) == (maxprio - i) {
 			podNamespacedName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
 			//tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod.Spec.Tolerations, taints, now)
-			tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod, pod.Spec.Tolerations, taints, now, time.Now().Add(time.Duration(i)*5*time.Millisecond))
+			tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod, pod.Spec.Tolerations, taints, now, time.Now().Add(time.Duration(i*counterDelay*10)*time.Millisecond))
+			counterDelay += 1
 			}
 		}
 	}

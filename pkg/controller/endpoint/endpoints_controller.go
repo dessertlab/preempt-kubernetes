@@ -48,6 +48,7 @@ import (
 	"k8s.io/kubernetes/pkg/controller"
 	utillabels "k8s.io/kubernetes/pkg/util/labels"
 	utilnet "k8s.io/utils/net"
+	controllerutil "k8s.io/kubernetes/pkg/controller/util/node"
 )
 
 const (
@@ -111,6 +112,9 @@ func NewEndpointController(podInformer coreinformers.PodInformer, serviceInforme
 
 	e.endpointUpdatesBatchPeriod = endpointUpdatesBatchPeriod
 
+	// TODO: Ulysses delete useless new object if possible
+	e.periodMan = controllerutil.NewPeriodManager(200,450,3)
+
 	return e
 }
 
@@ -156,6 +160,9 @@ type Controller struct {
 	triggerTimeTracker *endpointsliceutil.TriggerTimeTracker
 
 	endpointUpdatesBatchPeriod time.Duration
+
+	// Period Manager that controls the waking time of workers
+	periodMan *controllerutil.PeriodManager
 }
 
 // Run will not return until stopCh is closed. workers determines how many
@@ -178,9 +185,20 @@ func (e *Controller) Run(ctx context.Context, workers int) {
 		return
 	}
 
-	for i := 0; i < workers; i++ {
+	// TODO: Ulysses improve parameteres periods
+	e.periodMan = controllerutil.NewPeriodManager(uint32(150*workers),1000,uint32(workers))	//100
+
+	interval := time.NewTicker(20 * time.Millisecond)
+	// TODO: Ulysses improve parameteres number of workers
+	// Start workers critical reserved
+	go wait.UntilWithContext(ctx, e.workerAsSoonAsPossible, e.workerLoopPeriod)
+	// Start periodic workers
+	for i := 0; i < workers-1; i++ {
 		go wait.UntilWithContext(ctx, e.worker, e.workerLoopPeriod)
+		klog.Infof("Delaying start of worker %d", i)
+		<-interval.C
 	}
+	go e.periodMan.Dispatch()
 
 	go func() {
 		defer utilruntime.HandleCrash()
@@ -199,9 +217,19 @@ func (e *Controller) addPod(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("Unable to get pod %s/%s's service memberships: %v", pod.Namespace, pod.Name, err))
 		return
 	}
-	for key := range services {
-		e.queue.AddAfter(key, e.endpointUpdatesBatchPeriod)
+	crit:=controllerutil.GetPodCriticality(pod)
+	if crit > 0 {
+		for key := range services {
+			fmt.Println("GREPTAG Added critical pod udpserv for endpointync %s/%s", pod.Namespace, pod.Name)
+			e.queue.Add(key, crit)
+		}
+	} else {
+		for key := range services {
+			//TODO: Ulysses how to fix here?
+			e.queue.AddAfter(key, e.endpointUpdatesBatchPeriod)
+		}
 	}
+
 }
 
 func podToEndpointAddressForService(svc *v1.Service, pod *v1.Pod) (*v1.EndpointAddress, error) {
@@ -264,8 +292,18 @@ func podToEndpointAddressForService(svc *v1.Service, pod *v1.Pod) (*v1.EndpointA
 // old and cur must be *v1.Pod types.
 func (e *Controller) updatePod(old, cur interface{}) {
 	services := endpointsliceutil.GetServicesToUpdateOnPodChange(e.serviceLister, old, cur)
-	for key := range services {
-		e.queue.AddAfter(key, e.endpointUpdatesBatchPeriod)
+	pod := cur.(*v1.Pod) 
+	crit:=controllerutil.GetPodCriticality(pod)
+	if crit > 0 {
+		for key := range services {
+			fmt.Println("GREPTAG Added critical pod udpserv for endpointsync %s/%s", pod.Namespace, pod.Name)
+			e.queue.Add(key, crit)
+		}
+	} else {
+		for key := range services {
+			//TODO: Ulysses how to fix here?
+			e.queue.AddAfter(key, e.endpointUpdatesBatchPeriod)
+		}
 	}
 }
 
@@ -286,6 +324,7 @@ func (e *Controller) onServiceUpdate(obj interface{}) {
 		return
 	}
 	e.queue.Add(key)
+	//TODO: Ulysses implement here
 }
 
 // onServiceDelete removes the Service Selector from the cache and queues the Service for processing.
@@ -296,6 +335,7 @@ func (e *Controller) onServiceDelete(obj interface{}) {
 		return
 	}
 	e.queue.Add(key)
+	//TODO: Ulysses implement here
 }
 
 func (e *Controller) onEndpointsDelete(obj interface{}) {
@@ -304,7 +344,15 @@ func (e *Controller) onEndpointsDelete(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
 		return
 	}
+	fmt.Println("GREPTAG Problem onepdelete %v", key)
 	e.queue.Add(key)
+	//TODO: Ulysses implement here
+}
+
+
+func (e *Controller) workerAsSoonAsPossible(ctx context.Context) {
+	for e.processNextWorkItemAsSoonAsPossible(ctx) {	
+	}
 }
 
 // worker runs a worker thread that just dequeues items, processes them, and
@@ -313,22 +361,47 @@ func (e *Controller) onEndpointsDelete(obj interface{}) {
 // at the same time.
 func (e *Controller) worker(ctx context.Context) {
 	for e.processNextWorkItem(ctx) {
+		e.periodMan.WaitPeriod()
 	}
 }
 
-func (e *Controller) processNextWorkItem(ctx context.Context) bool {
-	eKey, quit := e.queue.Get()
+
+func (e *Controller) processNextWorkItemAsSoonAsPossible(ctx context.Context) bool {
+	eKey, quit := e.queue.GetCritical()
 	if quit {
 		return false
 	}
 	defer e.queue.Done(eKey)
-
 	logger := klog.FromContext(ctx)
+	logger.Info("GREPTAG Got Critical EP %v", eKey)
 	err := e.syncService(ctx, eKey.(string))
 	e.handleErr(logger, err, eKey)
 
 	return true
 }
+
+func (e *Controller) processNextWorkItem(ctx context.Context) bool {
+
+	eKey, code := e.queue.GetDeterministic()
+
+	if code == 2 || code == 3 {
+		return true
+	}
+
+	if code == 1 {
+		return false
+	}
+	defer e.queue.Done(eKey)
+
+	logger := klog.FromContext(ctx)
+	logger.Info("GREPTAG Got EP %v", eKey)
+	err := e.syncService(ctx, eKey.(string))
+	e.handleErr(logger, err, eKey)
+
+	return true
+}
+
+
 
 func (e *Controller) handleErr(logger klog.Logger, err error, key interface{}) {
 	if err == nil {
@@ -579,6 +652,7 @@ func (e *Controller) checkLeftoverEndpoints() {
 			utilruntime.HandleError(fmt.Errorf("Unable to get key for endpoint %#v", ep))
 			continue
 		}
+		fmt.Println("GREPTAG Problem checkleftoverendpoints %v", key)
 		e.queue.Add(key)
 	}
 }
