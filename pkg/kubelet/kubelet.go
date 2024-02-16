@@ -2359,11 +2359,12 @@ func (kl *Kubelet) syncLoop(ctx context.Context, updates <-chan kubetypes.PodUpd
 		kl.dnsConfigurer.CheckLimitsForResolvConf()
 	}
 
-	addChan := make(chan kubetypes.PodUpdate)
+	updateChanlow := make(chan kubetypes.PodUpdate)
 	addChanlow := make(chan kubetypes.PodUpdate)
 	//queue := workqueue.NewNamed("add_pod_queue")
 
-	go addHandlerPeriodic(addChanlow, addChan, handler, kl)
+	go HandlerPeriodic(addChanlow, handler, kl)
+	go HandlerPeriodic(updateChanlow, handler, kl)
 
 	for {
 		if err := kl.runtimeState.runtimeErrors(); err != nil {
@@ -2377,7 +2378,7 @@ func (kl *Kubelet) syncLoop(ctx context.Context, updates <-chan kubetypes.PodUpd
 		duration = base
 
 		kl.syncLoopMonitor.Store(kl.clock.Now())
-		if !kl.syncLoopIteration(ctx, updates, handler, syncTicker.C, housekeepingTicker.C, plegCh, addChan, addChanlow) {
+		if !kl.syncLoopIteration(ctx, updates, handler, syncTicker.C, housekeepingTicker.C, plegCh, updateChanlow, addChanlow) {
 			break
 		}
 		kl.syncLoopMonitor.Store(kl.clock.Now())
@@ -2387,37 +2388,39 @@ func (kl *Kubelet) syncLoop(ctx context.Context, updates <-chan kubetypes.PodUpd
 func handleevent(u kubetypes.PodUpdate, handler SyncHandler) {
 	switch u.Op {
 	case kubetypes.ADD:
-		klog.V(2).InfoS("SyncLoop ADD Delayed", "source", u.Source, "pods", klog.KObjs(u.Pods))
-		// After restarting, kubelet will get all existing pods through
-		// ADD as if they are new pods. These pods will then go through the
-		// admission process and *may* be rejected. This can be resolved
-		// once we have checkpointing.
+		klog.InfoS("SyncLoop ADD Delayed", "source", u.Source, "pods", klog.KObjs(u.Pods))
 		handler.HandlePodAdditions(u.Pods)
+	case kubetypes.UPDATE:
+		klog.InfoS("SyncLoop UPDATE Delayed", "source", u.Source, "pods", klog.KObjSlice(u.Pods))
+		handler.HandlePodUpdates(u.Pods)
+	case kubetypes.DELETE:
+		klog.InfoS("SyncLoop DELETE Delayed", "source", u.Source, "pods", klog.KObjSlice(u.Pods))
+		handler.HandlePodUpdates(u.Pods)
 	}
 }
 
-func addHandlerPeriodic(lowprio, hiprio <-chan kubetypes.PodUpdate, handler SyncHandler, kl *Kubelet) {
+func HandlerPeriodic(lowprio <-chan kubetypes.PodUpdate, handler SyncHandler, kl *Kubelet) {
 	timeToSleep := kl.ReservedPodOpeningTime
 	now := time.Now().Unix()
 	oldnow := time.Now().Unix()
 	for {
 		oldnow = now
 		select {
-		case u := <-hiprio:
+		case u := <-lowprio:
 			now = time.Now().Unix() //now = metav1.Now() //
 			//klog.InfoS("Got Item hiprio, pods:", klog.KObjs(u.Pods))
 			handleevent(u, handler)
-		default:
-			select {
-			case u := <-hiprio:
-				now = time.Now().Unix()	 //now = metav1.Now() //
-				//klog.InfoS("Got Item hiprio, pods:", klog.KObjs(u.Pods))
-				handleevent(u, handler)
-			case u := <-lowprio:
-				now = time.Now().Unix()  //now = metav1.Now()
-				//klog.InfoS("Got Item low, pods:", klog.KObjs(u.Pods))
-				handleevent(u, handler)
-			}
+		// default:
+		// 	select {
+		// 	case u := <-hiprio:
+		// 		now = time.Now().Unix()	 //now = metav1.Now() //
+		// 		//klog.InfoS("Got Item hiprio, pods:", klog.KObjs(u.Pods))
+		// 		handleevent(u, handler)
+		// 	case u := <-lowprio:
+		// 		now = time.Now().Unix()  //now = metav1.Now()
+		// 		//klog.InfoS("Got Item low, pods:", klog.KObjs(u.Pods))
+		// 		handleevent(u, handler)
+		// 	}
 		}
 		if (now - oldnow) > int64(kl.ReservedPodOpeningTimeReset.Duration.Seconds()) {
 			timeToSleep = kl.ReservedPodOpeningTime
@@ -2426,8 +2429,8 @@ func addHandlerPeriodic(lowprio, hiprio <-chan kubetypes.PodUpdate, handler Sync
 		time.Sleep(timeToSleep.Duration) //time.Duration(timeToSleep) * time.Millisecond)
 		timeToSleep =  metav1.Duration{Duration:  time.Duration(float64(timeToSleep.Duration) / float64(kl.ReservedPodOpeningTimeRescale))} 
 	}
-}
-	 
+} 
+
 
 // syncLoopIteration reads from various channels and dispatches pods to the
 // given handler.
@@ -2461,9 +2464,9 @@ func addHandlerPeriodic(lowprio, hiprio <-chan kubetypes.PodUpdate, handler Sync
 //   - housekeepingCh: trigger cleanup of pods
 //   - health manager: sync pods that have failed or in which one or more
 //     containers have failed health checks
-func WrapSend(u kubetypes.PodUpdate, addchanlow chan kubetypes.PodUpdate) {addchanlow <- u}
+func WrapSend(u kubetypes.PodUpdate, chanvar chan kubetypes.PodUpdate) {chanvar <- u}
 func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan kubetypes.PodUpdate, handler SyncHandler,
-	syncCh <-chan time.Time, housekeepingCh <-chan time.Time, plegCh <-chan *pleg.PodLifecycleEvent,  addchan, addchanlow chan kubetypes.PodUpdate) bool {
+	syncCh <-chan time.Time, housekeepingCh <-chan time.Time, plegCh <-chan *pleg.PodLifecycleEvent,  updatechanlow, addchanlow chan kubetypes.PodUpdate) bool {
 	select {
 	case u, open := <-configCh:
 		// Update from a config source; dispatch it to the right handler
@@ -2473,21 +2476,20 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan kubety
 			return false
 		}
 
+		// Ulysses: multi-priority kubelet
+		criticalityValue := 0
+		for _, pod := range u.Pods {
+			if controllerutil.GetPodCriticality(pod) > criticalityValue {
+				criticalityValue = controllerutil.GetPodCriticality(pod)
+			}
+		}
+		// end of multi-priority kubelet
 		switch u.Op {
 		case kubetypes.ADD:
 			klog.V(2).InfoS("SyncLoop ADD", "source", u.Source, "pods", klog.KObjSlice(u.Pods))
-
-			// Ulysses: multi-priority kubelet
-			criticalityValue := 0
-			for _, pod := range u.Pods {
-				if controllerutil.GetPodCriticality(pod) > criticalityValue {
-					criticalityValue = controllerutil.GetPodCriticality(pod)
-				}
-			}
 			klog.InfoS("Added Item at Prio ", criticalityValue, " pods", klog.KObjs(u.Pods))
 			//queue.Add(u, criticalityValue)
 			//handler.HandlePodAdditions(u.Pods)
-			// end of multi-priority kubelet
 
 			// After restarting, kubelet will get all existing pods through
 			// ADD as if they are new pods. These pods will then go through the
@@ -2502,7 +2504,11 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan kubety
 
 		case kubetypes.UPDATE:
 			klog.V(2).InfoS("SyncLoop UPDATE", "source", u.Source, "pods", klog.KObjSlice(u.Pods))
-			handler.HandlePodUpdates(u.Pods)
+			if criticalityValue > 0 {
+				handler.HandlePodUpdates(u.Pods)
+			} else {
+				go WrapSend(u,updatechanlow)
+			}
 		case kubetypes.REMOVE:
 			klog.V(2).InfoS("SyncLoop REMOVE", "source", u.Source, "pods", klog.KObjSlice(u.Pods))
 			handler.HandlePodRemoves(u.Pods)
@@ -2512,7 +2518,11 @@ func (kl *Kubelet) syncLoopIteration(ctx context.Context, configCh <-chan kubety
 		case kubetypes.DELETE:
 			klog.V(2).InfoS("SyncLoop DELETE", "source", u.Source, "pods", klog.KObjSlice(u.Pods))
 			// DELETE is treated as a UPDATE because of graceful deletion.
-			handler.HandlePodUpdates(u.Pods)
+			if criticalityValue > 0 {
+				handler.HandlePodUpdates(u.Pods)
+			} else {
+				go WrapSend(u,updatechanlow)
+			}
 		case kubetypes.SET:
 			// TODO: Do we want to support this?
 			klog.ErrorS(nil, "Kubelet does not support snapshot update")
