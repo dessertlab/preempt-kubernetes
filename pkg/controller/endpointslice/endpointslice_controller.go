@@ -48,6 +48,7 @@ import (
 	"k8s.io/kubernetes/pkg/controller"
 	endpointslicepkg "k8s.io/kubernetes/pkg/controller/util/endpointslice"
 	"k8s.io/kubernetes/pkg/features"
+	controllerutil "k8s.io/kubernetes/pkg/controller/util/node"
 )
 
 const (
@@ -504,15 +505,35 @@ func (c *Controller) addPod(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("Unable to get pod %s/%s's service memberships: %v", pod.Namespace, pod.Name, err))
 		return
 	}
-	for key := range services {
-		c.queue.AddAfter(key, c.endpointUpdatesBatchPeriod)
+	crit:=controllerutil.GetPodCriticality(pod)
+	if crit > 0 {
+		for key := range services {
+			fmt.Println("GREPTAG Added critical pod udpserv for endpointslicesync %s/%s", pod.Namespace, pod.Name)
+			c.queue.Add(key, crit)
+		}
+	} else {
+		for key := range services {
+			//TODO: Ulysses how to fix here?
+			c.queue.AddAfter(key, c.endpointUpdatesBatchPeriod)
+		}
 	}
 }
 
 func (c *Controller) updatePod(old, cur interface{}) {
 	services := endpointsliceutil.GetServicesToUpdateOnPodChange(c.serviceLister, old, cur)
-	for key := range services {
-		c.queue.AddAfter(key, c.endpointUpdatesBatchPeriod)
+	pod := cur.(*v1.Pod)
+	crit:=controllerutil.GetPodCriticality(pod)
+
+	if crit > 0 {
+		for key := range services {
+			fmt.Println("GREPTAG Updated critical pod udpserv for endpointslicesync  %s/%s", pod.Namespace, pod.Name)
+			c.queue.Add(key, crit)
+		}
+	} else {
+		for key := range services {
+			//TODO: Ulysses how to fix here?
+			c.queue.AddAfter(key, c.endpointUpdatesBatchPeriod)
+		}
 	}
 }
 
