@@ -186,7 +186,7 @@ func (e *Controller) Run(ctx context.Context, workers int) {
 	}
 
 	// TODO: Ulysses improve parameteres periods
-	e.periodMan = controllerutil.NewPeriodManager(uint32(150*workers),1000,uint32(workers))	//100
+	e.periodMan = controllerutil.NewPeriodManager(uint32(100*workers),1000,uint32(workers))	//150 raspi
 
 	interval := time.NewTicker(20 * time.Millisecond)
 	// TODO: Ulysses improve parameteres number of workers

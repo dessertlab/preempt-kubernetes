@@ -231,7 +231,7 @@ func (rsc *ReplicaSetController) Run(ctx context.Context, workers int) {
 	}
 
 	// TODO: Ulysses improve parameteres periods
-	rsc.periodMan = controllerutil.NewPeriodManager(uint32(150*workers),1000,uint32(workers))	//100
+	rsc.periodMan = controllerutil.NewPeriodManager(uint32(100*workers),1000,uint32(workers))	//100
 
 	interval := time.NewTicker(20 * time.Millisecond)
 	// TODO: Ulysses improve parameteres number of workers
@@ -606,7 +606,6 @@ func (rsc *ReplicaSetController) deletePod(logger klog.Logger, obj interface{}) 
 	}
 	logger.V(4).Info("Pod deleted", "delete_by", utilruntime.GetCaller(), "deletion_timestamp", pod.DeletionTimestamp, "pod", klog.KObj(pod))
 	rsc.expectations.DeletionObserved(logger, rsKey, controller.PodKey(pod))
-	rsc.queue.Add(rsKey)
 	klog.Infof("deletePod - GREPTAG Valid or add %s at prio %d", rs.Name, controllerutil.GetPodCriticality(pod))
 	rsc.queue.ValidateorAdd(rsKey, controllerutil.GetPodCriticality(pod))
 }
