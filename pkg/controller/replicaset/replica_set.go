@@ -599,7 +599,6 @@ func (rsc *ReplicaSetController) deletePod(logger klog.Logger, obj interface{}) 
 	}
 	logger.V(4).Info("Pod deleted", "delete_by", utilruntime.GetCaller(), "deletion_timestamp", pod.DeletionTimestamp, "pod", klog.KObj(pod))
 	rsc.expectations.DeletionObserved(logger, rsKey, controller.PodKey(pod))
-	rsc.queue.Add(rsKey)
 	//klog.Infof("deletePod - GREPTAG Valid or add %s at prio %d", rs.Name, controllerutil.GetPodCriticality(pod))
 	rsc.queue.ValidateorAdd(rsKey, controllerutil.GetPodCriticality(pod))
 }
