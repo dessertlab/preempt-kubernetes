@@ -330,7 +330,7 @@ func (rsc *ReplicaSetController) enqueueRSAfter(rs *apps.ReplicaSet, duration ti
 func (rsc *ReplicaSetController) addRS(logger klog.Logger, obj interface{}) {
 	rs := obj.(*apps.ReplicaSet)
 	logger.V(4).Info("Adding", "replicaSet", klog.KObj(rs))
-	rsc.enqueueRS(rs, 0)
+	rsc.enqueueRS(rs, controllerutil.GetRSCriticality(rs))
 }
 
 // callback when RS is updated
@@ -367,7 +367,7 @@ func (rsc *ReplicaSetController) updateRS(logger klog.Logger, old, cur interface
 		logger.V(4).Info("replicaSet updated. Desired pod count change.", "replicaSet", klog.KObj(oldRS), "oldReplicas", *(oldRS.Spec.Replicas), "newReplicas", *(curRS.Spec.Replicas))
 	}
 	//klog.Infof("updateRS - GREPTAG Enqueue replicaset %s at prio %d", curRS.Name, 0)
-	rsc.enqueueRS(curRS, 0)
+	rsc.enqueueRS(curRS, controllerutil.GetRSCriticality(curRS))
 }
 
 func (rsc *ReplicaSetController) deleteRS(logger klog.Logger, obj interface{}) {
@@ -636,7 +636,8 @@ func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
 		return true
 	}
 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
-	rsc.queue.AddRateLimited(key)
+	//rsc.queue.AddRateLimited(key)
+	rsc.queue.Add(key,1)
 	return true
 }
 

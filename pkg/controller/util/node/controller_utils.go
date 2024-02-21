@@ -37,6 +37,7 @@ import (
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/kubelet/util/format"
 	nodepkg "k8s.io/kubernetes/pkg/util/node"
+	apps "k8s.io/api/apps/v1"
 
 	"k8s.io/klog/v2"
 )
@@ -310,6 +311,20 @@ func GetNodeCondition(status *v1.NodeStatus, conditionType v1.NodeConditionType)
 func GetPodCriticality(pod *v1.Pod) int {
 	criticalityValue := 0
 	criticality, exist := pod.Labels["Criticality"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
+}
+
+// helper function: returns an int that represents the criticality of the pod
+// Critical pods must be prioritized
+func GetRSCriticality(rs *apps.ReplicaSet) int {
+	criticalityValue := 0
+	criticality, exist := rs.Labels["Criticality"]
 	if exist {
 		value, err := strconv.Atoi(criticality)
 		if err == nil {
