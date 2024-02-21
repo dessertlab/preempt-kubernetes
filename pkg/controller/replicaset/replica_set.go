@@ -35,7 +35,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-
+	
 	apps "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -231,7 +231,7 @@ func (rsc *ReplicaSetController) Run(ctx context.Context, workers int) {
 	}
 
 	// TODO: Ulysses improve parameteres periods
-	rsc.periodMan = controllerutil.NewPeriodManager(uint32(100*workers),1000,uint32(workers))	//100
+	rsc.periodMan = controllerutil.NewPeriodManager(uint32(150*workers),1000,uint32(workers))	//100 orion 150 raspi
 
 	interval := time.NewTicker(20 * time.Millisecond)
 	// TODO: Ulysses improve parameteres number of workers
@@ -653,7 +653,6 @@ func (rsc *ReplicaSetController) processNextWorkItemAsSoonAsPossible(ctx context
 	}
 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
 	rsc.queue.Add(key, 1)
-	//rsc.queue.AddRateLimited(key)
 	return true
 }
 
@@ -694,6 +693,15 @@ func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
 	}
 
 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
+	keys, ok := key.(string)
+	if !ok{
+		fmt.Println("bad cast")
+	}
+	if  strings.Contains(keys, "critical") {
+		rsc.queue.Add(key,2)
+	} else {
+		rsc.queue.AddRateLimited(key)
+	}
 	rsc.queue.AddRateLimited(key)
 
 	return true

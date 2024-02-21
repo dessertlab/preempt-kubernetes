@@ -20,7 +20,8 @@ import (
 	"context"
 	"fmt"
 	"time"
-
+	"strings"
+	
 	"golang.org/x/time/rate"
 
 	v1 "k8s.io/api/core/v1"
@@ -278,7 +279,7 @@ func (c *Controller) Run(ctx context.Context, workers int) {
 	logger.V(2).Info("Starting worker threads", "total", workers)
 
 	// TODO: Ulysses improve parameteres periods
-	c.periodMan = controllerutil.NewPeriodManager(uint32(100*workers),1000,uint32(workers))	//150 raspi
+	c.periodMan = controllerutil.NewPeriodManager(uint32(100*workers),1000,uint32(workers))	//50 orion 
 
 	interval := time.NewTicker(20 * time.Millisecond)
 	// TODO: Ulysses improve parameteres number of workers
@@ -351,7 +352,15 @@ func (c *Controller) handleErr(logger klog.Logger, err error, key interface{}) {
 
 	if c.queue.NumRequeues(key) < maxRetries {
 		logger.Info("Error syncing endpoint slices for service, retrying", "key", key, "err", err)
-		c.queue.AddRateLimited(key)
+		keys, ok := key.(string)
+		if !ok{
+			fmt.Println("bad cast")
+		}
+		if strings.Contains(keys, "critical") {
+			c.queue.Add(key,2)
+		} else {
+			c.queue.AddRateLimited(key)
+		}
 		return
 	}
 
@@ -539,7 +548,13 @@ func (c *Controller) queueServiceForEndpointSlice(endpointSlice *discovery.Endpo
 	if c.endpointUpdatesBatchPeriod > delay {
 		delay = c.endpointUpdatesBatchPeriod
 	}
-	c.queue.AddAfter(key, delay)
+	fmt.Println("GREPTAG problem enqueue of %s without prio", key)
+	if strings.Contains(key, "critical") {
+		fmt.Println("GREPTAG on ep delete critical %v", key)
+		c.queue.Add(key,2)
+	} else {
+		c.queue.AddAfter(key, delay)
+	}
 }
 
 func (c *Controller) addPod(obj interface{}) {
@@ -557,7 +572,6 @@ func (c *Controller) addPod(obj interface{}) {
 		}
 	} else {
 		for key := range services {
-			//TODO: Ulysses how to fix here?
 			c.queue.AddAfter(key, c.endpointUpdatesBatchPeriod)
 		}
 	}
@@ -575,7 +589,6 @@ func (c *Controller) updatePod(old, cur interface{}) {
 		}
 	} else {
 		for key := range services {
-			//TODO: Ulysses how to fix here?
 			c.queue.AddAfter(key, c.endpointUpdatesBatchPeriod)
 		}
 	}

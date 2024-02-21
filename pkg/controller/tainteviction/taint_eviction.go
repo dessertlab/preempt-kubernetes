@@ -229,7 +229,7 @@ func New(ctx context.Context, c clientset.Interface, podInformer corev1informers
 		nodeUpdateQueue: workqueue.NewWithConfig(workqueue.QueueConfig{Name: "noexec_taint_node"}),
 		podUpdateQueue:  workqueue.NewWithConfig(workqueue.QueueConfig{Name: "noexec_taint_pod"}),
 		//TODO: Ulysses improve parameters period
-		periodMan: controllerutil.NewPeriodManager(50,1000,1),		//300 raspi
+		periodMan: controllerutil.NewPeriodManager(150,1000,1),		//50 orion
 	}
 	tm.taintEvictionQueue = CreateWorkerQueue(deletePodHandler(c, tm.emitPodDeletionEvent, tm.name))
 

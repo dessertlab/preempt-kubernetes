@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"time"
+	"strings"
 
 	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -186,7 +187,7 @@ func (e *Controller) Run(ctx context.Context, workers int) {
 	}
 
 	// TODO: Ulysses improve parameteres periods
-	e.periodMan = controllerutil.NewPeriodManager(uint32(100*workers),1000,uint32(workers))	//150 raspi
+	e.periodMan = controllerutil.NewPeriodManager(uint32(100*workers),1000,uint32(workers))	//50 orion
 
 	interval := time.NewTicker(20 * time.Millisecond)
 	// TODO: Ulysses improve parameteres number of workers
@@ -225,7 +226,6 @@ func (e *Controller) addPod(obj interface{}) {
 		}
 	} else {
 		for key := range services {
-			//TODO: Ulysses how to fix here?
 			e.queue.AddAfter(key, e.endpointUpdatesBatchPeriod)
 		}
 	}
@@ -301,7 +301,6 @@ func (e *Controller) updatePod(old, cur interface{}) {
 		}
 	} else {
 		for key := range services {
-			//TODO: Ulysses how to fix here?
 			e.queue.AddAfter(key, e.endpointUpdatesBatchPeriod)
 		}
 	}
@@ -318,24 +317,24 @@ func (e *Controller) deletePod(obj interface{}) {
 
 // onServiceUpdate updates the Service Selector in the cache and queues the Service for processing.
 func (e *Controller) onServiceUpdate(obj interface{}) {
+	service, _ := obj.(*v1.Service)
 	key, err := controller.KeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
 		return
 	}
-	e.queue.Add(key)
-	//TODO: Ulysses implement here
+	e.queue.Add(key, controllerutil.GetServiceCriticality(service))
 }
 
 // onServiceDelete removes the Service Selector from the cache and queues the Service for processing.
 func (e *Controller) onServiceDelete(obj interface{}) {
+	service, _ := obj.(*v1.Service)
 	key, err := controller.KeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
 		return
 	}
-	e.queue.Add(key)
-	//TODO: Ulysses implement here
+	e.queue.Add(key, controllerutil.GetServiceCriticality(service))
 }
 
 func (e *Controller) onEndpointsDelete(obj interface{}) {
@@ -344,9 +343,12 @@ func (e *Controller) onEndpointsDelete(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
 		return
 	}
-	fmt.Println("GREPTAG Problem onepdelete %v", key)
-	e.queue.Add(key)
-	//TODO: Ulysses implement here
+	if strings.Contains(key, "critical") {
+		fmt.Println("GREPTAG on ep delete critical %v", key)
+		e.queue.Add(key,2)
+	} else {
+		e.queue.Add(key)
+	}
 }
 
 
@@ -416,7 +418,15 @@ func (e *Controller) handleErr(logger klog.Logger, err error, key interface{}) {
 
 	if e.queue.NumRequeues(key) < maxRetries {
 		logger.V(2).Info("Error syncing endpoints, retrying", "service", klog.KRef(ns, name), "err", err)
-		e.queue.AddRateLimited(key)
+		keys, ok := key.(string)
+		if !ok{
+			fmt.Println("bad cast")
+		}
+		if strings.Contains(keys, "critical") {
+			e.queue.Add(key,2)
+		} else {
+			e.queue.AddRateLimited(key)
+		}
 		return
 	}
 
@@ -653,7 +663,12 @@ func (e *Controller) checkLeftoverEndpoints() {
 			continue
 		}
 		fmt.Println("GREPTAG Problem checkleftoverendpoints %v", key)
-		e.queue.Add(key)
+		if strings.Contains(key, "critical") {
+			fmt.Println("GREPTAG checkleftoverep critical %v", key)
+			e.queue.Add(key,2)
+		} else {
+			e.queue.Add(key)
+		}
 	}
 }
 

@@ -178,7 +178,7 @@ func (dc *DeploymentController) Run(ctx context.Context, workers int) {
 		return
 	}
 
-	dc.periodMan = controllerutil.NewPeriodManager(uint32(workers * 100),1000, uint32(workers))			//150 raspi
+	dc.periodMan = controllerutil.NewPeriodManager(uint32(workers * 150),1000, uint32(workers))			//100 orion 150 raspi
 
 	interval := time.NewTicker(20 * time.Millisecond)
 	// Start workers reserved for critical
