@@ -179,7 +179,7 @@ func NewController(ctx context.Context, podInformer coreinformers.PodInformer,
 	)
 
 	// TODO: Ulysses delete useless new object if possible
-	c.periodMan = controllerutil.NewPeriodManager(200,450,3)
+	c.periodMan = controllerutil.NewPeriodManager(10,450,3)
 
 	return c
 }
@@ -447,24 +447,26 @@ func (c *Controller) syncService(logger klog.Logger, key string) error {
 
 // onServiceUpdate updates the Service Selector in the cache and queues the Service for processing.
 func (c *Controller) onServiceUpdate(obj interface{}) {
+	service, _ := obj.(*v1.Service)
 	key, err := controller.KeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
 		return
 	}
 
-	c.queue.Add(key)
+	c.queue.Add(key,controllerutil.GetServiceCriticality(service))
 }
 
 // onServiceDelete removes the Service Selector from the cache and queues the Service for processing.
 func (c *Controller) onServiceDelete(obj interface{}) {
+	service, _ := obj.(*v1.Service)
 	key, err := controller.KeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
 		return
 	}
 
-	c.queue.Add(key)
+	c.queue.Add(key,controllerutil.GetServiceCriticality(service))
 }
 
 // onEndpointSliceAdd queues a sync for the relevant Service for a sync if the

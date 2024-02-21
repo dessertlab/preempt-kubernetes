@@ -310,7 +310,6 @@ func (rsc *ReplicaSetController) resolveControllerRef(namespace string, controll
 	return rs
 }
 
-//func (rsc *ReplicaSetController) enqueueRS(rs *apps.ReplicaSet) {
 func (rsc *ReplicaSetController) enqueueRS(rs *apps.ReplicaSet, criticality int) {
 	key, err := controller.KeyFunc(rs)
 	if err != nil {
@@ -318,8 +317,7 @@ func (rsc *ReplicaSetController) enqueueRS(rs *apps.ReplicaSet, criticality int)
 		return
 	}
 
-	//rsc.queue.Add(key)
-	//klog.Infof("enqueueRS - GREPTAG Ulysses Enqueue replicaset %s at prio %d", rs.Name, criticality)
+	fmt.Println("enqueueRS - GREPTAG Ulysses Enqueue replicaset %s at prio %d", rs.Name, criticality)
 	rsc.queue.Add(key, criticality)
 }
 
@@ -330,6 +328,7 @@ func (rsc *ReplicaSetController) enqueueRSAfter(rs *apps.ReplicaSet, duration ti
 		return
 	}
 
+	fmt.Println("enqueueRSafter - GREPTAG Ulysses Enqueue replicaset %s", rs.Name)
 	//TODO: Ulysses how ti fix here?
 	rsc.queue.AddAfter(key, duration)
 }
@@ -337,7 +336,7 @@ func (rsc *ReplicaSetController) enqueueRSAfter(rs *apps.ReplicaSet, duration ti
 func (rsc *ReplicaSetController) addRS(logger klog.Logger, obj interface{}) {
 	rs := obj.(*apps.ReplicaSet)
 	logger.V(4).Info("Adding", "replicaSet", klog.KObj(rs))
-	rsc.enqueueRS(rs, 0)
+	rsc.enqueueRS(rs, controllerutil.GetRSCriticality(rs))
 }
 
 // callback when RS is updated
@@ -373,8 +372,8 @@ func (rsc *ReplicaSetController) updateRS(logger klog.Logger, old, cur interface
 	if *(oldRS.Spec.Replicas) != *(curRS.Spec.Replicas) {
 		logger.V(4).Info("replicaSet updated. Desired pod count change.", "replicaSet", klog.KObj(oldRS), "oldReplicas", *(oldRS.Spec.Replicas), "newReplicas", *(curRS.Spec.Replicas))
 	}
-	//klog.Infof("updateRS - GREPTAG Enqueue replicaset %s at prio %d", curRS.Name, 0)
-	rsc.enqueueRS(curRS, 0)
+	fmt.Println("updateRS - GREPTAG Ulysses Enqueue replicaset %s at prio %d", curRS.Name,  controllerutil.GetRSCriticality(curRS))
+	rsc.enqueueRS(curRS, controllerutil.GetRSCriticality(curRS))
 }
 
 func (rsc *ReplicaSetController) deleteRS(logger klog.Logger, obj interface{}) {
@@ -402,8 +401,8 @@ func (rsc *ReplicaSetController) deleteRS(logger klog.Logger, obj interface{}) {
 
 	// Delete expectations for the ReplicaSet so if we create a new one with the same name it starts clean
 	rsc.expectations.DeleteExpectations(logger, key)
-
-	rsc.queue.Add(key)
+	fmt.Println("deleteRS - GREPTAG Ulysses Enqueue replicaset %s", rs.Name)
+	rsc.queue.Add(key, controllerutil.GetRSCriticality(rs))
 }
 
 // When a pod is created, enqueue the replica set that manages it and update its expectations.
@@ -429,7 +428,7 @@ func (rsc *ReplicaSetController) addPod(logger klog.Logger, obj interface{}) {
 		}
 		logger.V(4).Info("Pod created", "pod", klog.KObj(pod), "detail", pod)
 		rsc.expectations.CreationObserved(logger, rsKey)
-		//klog.Infof("addPod1 - GREPTAG Appending replicaset %s at prio %d", rs.Name, getPodCriticality(pod))
+		fmt.Println("addPod - GREPTAG Ulysses Enqueue replicaset %s at prio %d", rs.Name,  controllerutil.GetPodCriticality(pod))
 		rsc.queue.Add(rsKey, controllerutil.GetPodCriticality(pod))
 		return
 	}
@@ -507,7 +506,7 @@ func (rsc *ReplicaSetController) updatePod(logger klog.Logger, old, cur interfac
 			logger.V(2).Info("pod will be enqueued after a while for availability check", "duration", rs.Spec.MinReadySeconds, "kind", rsc.Kind, "pod", klog.KObj(oldPod))
 			// Add a second to avoid milliseconds skew in AddAfter.
 			// See https://github.com/kubernetes/kubernetes/issues/39785#issuecomment-279959133 for more info.
-			//klog.Infof("updatePod3 - GREPTAG Enqueue replicaset %s", rs.Name)
+			fmt.Println("updatePod - GREPTAG Ulysses Enqueue replicaset %s", rs.Name)
 			rsc.enqueueRSAfter(rs, (time.Duration(rs.Spec.MinReadySeconds)*time.Second)+time.Second)
 		}
 		return
@@ -564,7 +563,7 @@ func (rsc *ReplicaSetController) DeletePod(logger klog.Logger, obj interface{}) 
 	}
 	klog.V(4).Infof("Pod %s/%s deleted through %v, timestamp %+v: %#v.", pod.Namespace, pod.Name, utilruntime.GetCaller(), pod.DeletionTimestamp, pod)
 	rsc.expectations.DeletionObserved(logger, rsKey, controller.PodKey(pod))
-	//klog.Infof("DeletePod - GREPTAG Appending replicaset invaloid %s at prio %d", rs.Name, controllerutil.GetPodCriticality(pod))
+	fmt.Println("Deletepod - GREPTAG Ulysses Enqueue replicaset %s at prio %d", rs.Name,  controllerutil.GetPodCriticality(pod))
 	rsc.queue.AddInvalid(rsKey, controllerutil.GetPodCriticality(pod))
 }
 
@@ -647,12 +646,14 @@ func (rsc *ReplicaSetController) processNextWorkItemAsSoonAsPossible(ctx context
 	logger.V(2).Info("GREPTAG Got replicaset critical %s", key)
 	defer rsc.queue.Done(key)
 	err := rsc.syncHandler(ctx, key.(string))
+	fmt.Println("GREPTAG Done handling critical replicaset")
 	if err == nil {
 		rsc.queue.Forget(key)
 		return true
 	}
 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
-	rsc.queue.AddRateLimited(key)
+	rsc.queue.Add(key, 1)
+	//rsc.queue.AddRateLimited(key)
 	return true
 }
 
@@ -870,6 +871,7 @@ func (rsc *ReplicaSetController) syncReplicaSet(ctx context.Context, key string)
 	if manageReplicasErr == nil && updatedRS.Spec.MinReadySeconds > 0 &&
 		updatedRS.Status.ReadyReplicas == *(updatedRS.Spec.Replicas) &&
 		updatedRS.Status.AvailableReplicas != *(updatedRS.Spec.Replicas) {
+		fmt.Println("lastline - GREPTAG Ulysses Enqueue replicaset %s", key)
 		rsc.queue.AddAfter(key, time.Duration(updatedRS.Spec.MinReadySeconds)*time.Second)
 	}
 	return manageReplicasErr

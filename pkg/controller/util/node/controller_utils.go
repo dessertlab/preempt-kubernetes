@@ -29,6 +29,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
+	apps "k8s.io/api/apps/v1"
 
 	v1 "k8s.io/api/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
@@ -319,6 +320,32 @@ func GetPodCriticality(pod *v1.Pod) int {
 	return criticalityValue
 }
 
+func GetServiceCriticality(pod *v1.Service) int {
+	criticalityValue := 0
+	criticality, exist := pod.Labels["Criticality"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
+}
+
+// helper function: returns an int that represents the criticality of the pod
+// Critical pods must be prioritized
+func GetRSCriticality(rs *apps.ReplicaSet) int {
+	criticalityValue := 0
+	criticality, exist := rs.Labels["Criticality"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
+}
+
 // helper function: returns an int that represents the assurance of the node
 // In brief: a node with high assurance probably has critical pods on it, and must be prioritized
 func GetNodeAssurance(node *v1.Node) int {
@@ -395,6 +422,11 @@ func (p *PeriodManager) Dispatch() {
 		p.index = (p.index+1)%int(p.workersNumber)
 	}
 }
+func (p *PeriodManager) HurryUp() {
+	p.tickers[p.index] <- time.Now()
+	p.index = (p.index+1)%int(p.workersNumber)
+}
+
 func (p *PeriodManager) GetSleepingTime() int {
 	return int(p.currentPeriod / p.workersNumber)
 
