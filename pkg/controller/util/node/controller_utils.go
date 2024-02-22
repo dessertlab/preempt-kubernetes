@@ -320,6 +320,18 @@ func GetPodCriticality(pod *v1.Pod) int {
 	return criticalityValue
 }
 
+func GetServiceCriticality(pod *v1.Service) int {
+	criticalityValue := 0
+	criticality, exist := pod.Labels["Criticality"]
+	if exist {
+		value, err := strconv.Atoi(criticality)
+		if err == nil {
+			criticalityValue = value
+		}
+	}
+	return criticalityValue
+}
+
 // helper function: returns an int that represents the criticality of the pod
 // Critical pods must be prioritized
 func GetRSCriticality(rs *apps.ReplicaSet) int {

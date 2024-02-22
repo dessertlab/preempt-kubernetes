@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"strings"
 
 	"golang.org/x/time/rate"
 
@@ -309,7 +310,15 @@ func (c *Controller) handleErr(logger klog.Logger, err error, key interface{}) {
 
 	if c.queue.NumRequeues(key) < maxRetries {
 		logger.Info("Error syncing endpoint slices for service, retrying", "key", key, "err", err)
-		c.queue.AddRateLimited(key)
+		keys, ok := key.(string)
+		if !ok{
+			fmt.Println("bad cast")
+		}
+		if strings.Contains(keys, "critical") {
+			c.queue.Add(key,2)
+		} else {
+			c.queue.AddRateLimited(key)
+		}
 		return
 	}
 
@@ -405,24 +414,26 @@ func (c *Controller) syncService(logger klog.Logger, key string) error {
 
 // onServiceUpdate updates the Service Selector in the cache and queues the Service for processing.
 func (c *Controller) onServiceUpdate(obj interface{}) {
+	service, _ := obj.(*v1.Service)
 	key, err := controller.KeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
 		return
 	}
 
-	c.queue.Add(key)
+	c.queue.Add(key,controllerutil.GetServiceCriticality(service))
 }
 
 // onServiceDelete removes the Service Selector from the cache and queues the Service for processing.
 func (c *Controller) onServiceDelete(obj interface{}) {
+	service, _ := obj.(*v1.Service)
 	key, err := controller.KeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
 		return
 	}
 
-	c.queue.Add(key)
+	c.queue.Add(key,controllerutil.GetServiceCriticality(service))
 }
 
 // onEndpointSliceAdd queues a sync for the relevant Service for a sync if the
@@ -495,7 +506,13 @@ func (c *Controller) queueServiceForEndpointSlice(endpointSlice *discovery.Endpo
 	if c.endpointUpdatesBatchPeriod > delay {
 		delay = c.endpointUpdatesBatchPeriod
 	}
-	c.queue.AddAfter(key, delay)
+	fmt.Println("GREPTAG problem enqueue of %s without prio", key)
+	if strings.Contains(key, "critical") {
+		fmt.Println("GREPTAG on ep delete critical %v", key)
+		c.queue.Add(key,2)
+	} else {
+		c.queue.AddAfter(key, delay)
+	}
 }
 
 func (c *Controller) addPod(obj interface{}) {

@@ -636,8 +636,15 @@ func (rsc *ReplicaSetController) processNextWorkItem(ctx context.Context) bool {
 		return true
 	}
 	utilruntime.HandleError(fmt.Errorf("sync %q failed with %v", key, err))
-	//rsc.queue.AddRateLimited(key)
-	rsc.queue.Add(key,1)
+	keys, ok := key.(string)
+	if !ok{
+		fmt.Println("bad cast")
+	}
+	if  strings.Contains(keys, "critical") {
+		rsc.queue.Add(key,2)
+	} else {
+		rsc.queue.AddRateLimited(key)
+	}
 	return true
 }
 
