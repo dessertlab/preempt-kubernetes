@@ -231,7 +231,7 @@ func (rsc *ReplicaSetController) Run(ctx context.Context, workers int) {
 	}
 
 	// TODO: Ulysses improve parameteres periods
-	rsc.periodMan = controllerutil.NewPeriodManager(uint32(150*workers),1000,uint32(workers))	//100 orion 150 raspi
+	rsc.periodMan = controllerutil.NewPeriodManager(uint32(100*workers),1000,uint32(workers))	//100 orion 150 raspi
 
 	interval := time.NewTicker(20 * time.Millisecond)
 	// TODO: Ulysses improve parameteres number of workers

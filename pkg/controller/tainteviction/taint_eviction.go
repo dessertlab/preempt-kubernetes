@@ -229,7 +229,7 @@ func New(ctx context.Context, c clientset.Interface, podInformer corev1informers
 		nodeUpdateQueue: workqueue.NewWithConfig(workqueue.QueueConfig{Name: "noexec_taint_node"}),
 		podUpdateQueue:  workqueue.NewWithConfig(workqueue.QueueConfig{Name: "noexec_taint_pod"}),
 		//TODO: Ulysses improve parameters period
-		periodMan: controllerutil.NewPeriodManager(150,1000,1),		//50 orion
+		periodMan: controllerutil.NewPeriodManager(60,1000,1),		//50 orion 150 raspi
 	}
 	tm.taintEvictionQueue = CreateWorkerQueue(deletePodHandler(c, tm.emitPodDeletionEvent, tm.name))
 
@@ -648,7 +648,7 @@ func (tc *Controller) handleNodeUpdate(ctx context.Context, nodeUpdate nodeUpdat
 			if controllerutil.GetPodCriticality(pod) == (maxprio - i) {
 			podNamespacedName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
 			//tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod.Spec.Tolerations, taints, now)
-			tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod, pod.Spec.Tolerations, taints, now, time.Now().Add(time.Duration(i*counterDelay*10)*time.Millisecond))
+			tc.processPodOnNode(ctx, podNamespacedName, node.Name, pod, pod.Spec.Tolerations, taints, now, time.Now().Add(time.Duration(i*counterDelay*50)*time.Millisecond))
 			counterDelay += 1
 			}
 		}
