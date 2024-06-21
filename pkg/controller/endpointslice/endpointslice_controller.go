@@ -357,8 +357,10 @@ func (c *Controller) handleErr(logger klog.Logger, err error, key interface{}) {
 			fmt.Println("bad cast")
 		}
 		if strings.Contains(keys, "critical") {
+			fmt.Println("GREPTAG error sync critical req  %s", key)
 			c.queue.Add(key,2)
 		} else {
+			fmt.Println("GREPTAG error sync critical req  %s", key)
 			c.queue.AddRateLimited(key)
 		}
 		return
@@ -463,6 +465,7 @@ func (c *Controller) onServiceUpdate(obj interface{}) {
 		return
 	}
 
+	fmt.Println("GREPTAG onServiceUpdate standard %d %+v", controllerutil.GetServiceCriticality(service), service)
 	c.queue.Add(key,controllerutil.GetServiceCriticality(service))
 }
 
@@ -475,6 +478,7 @@ func (c *Controller) onServiceDelete(obj interface{}) {
 		return
 	}
 
+	fmt.Println("GREPTAG onServiceDelete standard %d %+v", controllerutil.GetServiceCriticality(service), service)
 	c.queue.Add(key,controllerutil.GetServiceCriticality(service))
 }
 
@@ -548,11 +552,12 @@ func (c *Controller) queueServiceForEndpointSlice(endpointSlice *discovery.Endpo
 	if c.endpointUpdatesBatchPeriod > delay {
 		delay = c.endpointUpdatesBatchPeriod
 	}
-	fmt.Println("GREPTAG problem enqueue of %s without prio", key)
+
 	if strings.Contains(key, "critical") {
-		fmt.Println("GREPTAG on ep delete critical %v", key)
+		fmt.Println("GREPTAG queueServiceForEndpointSlice critical %v", key)
 		c.queue.Add(key,2)
 	} else {
+		fmt.Println("GREPTAG queueServiceForEndpointSlice standard %v", key)
 		c.queue.AddAfter(key, delay)
 	}
 }
@@ -572,6 +577,7 @@ func (c *Controller) addPod(obj interface{}) {
 		}
 	} else {
 		for key := range services {
+			fmt.Println("GREPTAG Added standard pod udpserv for endpointslicesync %s/%s", pod.Namespace, pod.Name)
 			c.queue.AddAfter(key, c.endpointUpdatesBatchPeriod)
 		}
 	}
@@ -589,6 +595,7 @@ func (c *Controller) updatePod(old, cur interface{}) {
 		}
 	} else {
 		for key := range services {
+			fmt.Println("GREPTAG Updated standard pod udpserv for endpointslicesync  %s/%s", pod.Namespace, pod.Name)
 			c.queue.AddAfter(key, c.endpointUpdatesBatchPeriod)
 		}
 	}
