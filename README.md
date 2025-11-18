@@ -1,8 +1,8 @@
 # Preempt-Kubernetes (K8s)
 
-This repositort contains the code for Preempt-Kubernetes: a Kubernetes dowstream that provides SLO-aware orchestration times. 
+This repository contains the code for Preempt-Kubernetes: a Kubernetes dowstream that provides SLO-aware orchestration times. 
 The aim of this project is adapt the Kubernetes control plane to cope with soft real-time and latency-aware serverless/cloud native systems.
-For more info, please refer to the paper [SLO-Aware Orchestration Times]().
+For more info, please refer to the paper ["SLO-aware Prioritization of Orchestration Times for Containerized Services"](https://dl.acm.org/doi/10.1145/3767329).
 
 This repo modifies the upstream Kubernetes Kube-controller-manager and Kubelet to make them multi-priority and (optionally) synchronous. The Kube-apiserver remains unmodified, but during the experiments of the paper it was properly configured to have exempt flows. Please refer to the official Kubernetes doc for such configuration.
 
@@ -20,9 +20,15 @@ This commands builds all the pods of the control plane components in a container
 For additional options in the compilation, please refer to the Kubernetes documentation and to its Makefile. Other useful commands can be ```make release-in-a-container``` and ```make release```
 The container images built in the compilation process can be found compressed in tar format in _output/release-images/{arch}/{component}.tar
 * Copy the tar to the control plane node(s)
-```scp {component}.tar {user}@{ip}:/{destination_path}/
+``` bash
+scp {component}.tar {user}@{ip}:/{destination_path}/ 
+```
 * Import the container image into the container manager of the control plane.
-In the case of containerd, this can be done via ```ctr -n k8s.io -i load /{destination_path}/{component}.tar``` . The k8s.io namespace is essential for Kubernetes to see the patched component image.
+In the case of containerd, this can be done via 
+```
+ctr -n k8s.io -i load /{destination_path}/{component}.tar
+```
+The k8s.io namespace is essential for Kubernetes to see the patched component image.
 * Modify the manifest to use the Preempt-K8s component. 
 In /etc/kubernetes/manifest/{component}.yaml rename the container image to the the name of the imported image.
 
@@ -36,8 +42,10 @@ It can be built in different ways. We advice using (on the compiling machine)
 ```make all WHAT=cmd/kubelet GOFLAGS=-v```
 This command relies on the Go compiler installed in the environment, therefore take care of checking the GLIBC version used by the Go compiler and the one used in the target environemnt. It is adviced to create a building container with ad hoc packages and respective versions for this operation.
 * Copy the Kubelet to the target worker node(s) and if needed set the correct permissions of the executable 
-```sudo chmod +x _output/{path}/kubelet 
-scp _output/{path}/kubelet {user}@{ip}:/{destination_path}```
+```
+sudo chmod +x _output/{path}/kubelet 
+scp _output/{path}/kubelet {user}@{ip}:/{destination_path}
+```
 * Modify the systemd daemon file to change the executable file (on the target worker node).
 Usually in /usr/lib/systemd/system/kubelet.service, modify ExecStart line to {destination_path}/kubelet
 * Configure timing parameters (see next section)
