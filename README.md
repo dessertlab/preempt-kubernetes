@@ -13,7 +13,7 @@ The following sections describe how to build and run the kube-controller-manager
 
 ### Kube-controller-manager
 To compile and run the Preempt-K8s Kube-controller-manager, follow these steps:
-* Compile the pods of the control plane pods with the source code in this (variableperiod) branch.
+* Compile the pods of the control plane pods with the source code in this (periodic_controller) branch.
 The fastest way to do it is by running:
 ```make quick-release-images```
 This commands builds all the pods of the control plane components in a containerized environment. Therefore, it is suggested to run the command not in a container. There are no particular pre-requirements to run this commands apart from a container engine running on the system.
@@ -77,7 +77,7 @@ func GetPodCriticality(pod *v1.Pod) int {
 The Kube-controller-manager has no configuration parameter exposed to the user in the brach multiprio_only (no timing is used here).
 The number of queues with different priorities is defined by the constant ```const CRITICALITIES = 3``` in the file queue.go
 
-In the branch variableperiod, the controller has synchronous behavior. This is implemented through the split between 
+In the branch periodic_controller, the controller has synchronous behavior. This is implemented through the split between 
 ```
 func (rsc *ReplicaSetController) processNextWorkItemAsSoonAsPossible(ctx context.Context) bool {
 ``` 
