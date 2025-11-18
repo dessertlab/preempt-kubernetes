@@ -13,8 +13,8 @@ The following sections describe how to build and run the kube-controller-manager
 
 ### Kube-controller-manager
 To compile and run the Preempt-K8s Kube-controller-manager, follow these steps:
-* Compile the pods of the control plane pods with the source code in this (periodic_controller) branch.
-The fastest way to do it is by running:
+* Compile the pods of the control plane pods with the source code in the periodic_controller branch to build the synchronous version of the kube-controller-manager, use the multi_prio onlybranch to have only the multi-priority features with the classic asynchronous behavior.
+The fastest way to compile the control plane pods is by running:
 ```make quick-release-images```
 This commands builds all the pods of the control plane components in a containerized environment. Therefore, it is suggested to run the command not in a container. There are no particular pre-requirements to run this commands apart from a container engine running on the system.
 For additional options in the compilation, please refer to the Kubernetes documentation and to its Makefile. Other useful commands can be ```make release-in-a-container``` and ```make release```
@@ -35,7 +35,7 @@ In /etc/kubernetes/manifest/{component}.yaml rename the container image to the t
 The Preempt-K8s component should be running now!
 
 ### Kubelet
-* Checkout to multiprio_only branch
+* The modified Kubelet is implemented in the multiprio_only branch. Checkout to that branch.
 * Build the Kubelet
 Since the Kubelet usually runs as a systemd daemon, it is not compiled together with the container images for control plane components. For this reason, it must be built separately.
 It can be built in different ways. We advice using (on the compiling machine)
